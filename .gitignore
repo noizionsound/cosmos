@@ -1,0 +1,7 @@
+# original heavy WAV/MOV files — not committed
+sources/audio/*.wav
+sources/audio/*.mov
+sources/audio/research /
+# keep OGG/MP3/MP4 and the clean research/ folder
+!sources/audio/*.ogg
+!sources/audio/research/

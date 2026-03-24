@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>COSMOS</title>
+  <!-- system fonts only — no external loading needed -->
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; justify-content: center; align-items: center;
+           height: 100vh; overflow: hidden; }
+    canvas { display: block; cursor: none; }
+    #overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: rgba(195,200,198,0.68); font-family: Palatino, 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+      letter-spacing: 0.32em;
+      z-index: 10; cursor: pointer; user-select: none;
+    }
+    #overlay h1 { font-size: 30px; font-weight: normal; font-style: italic; margin-bottom: 28px; }
+    #overlay p  { font-size: 10px; opacity: 0.35; font-family: Menlo, 'SF Mono', 'Courier New', monospace; letter-spacing: 0.18em; font-style: normal; }
+  </style>
+</head>
+<body>
+<div id="overlay">
+  <canvas id="starfield" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0.55;"></canvas>
+  <h1 style="position:relative;">C O S M O S</h1>
+  <p style="position:relative; margin-top:12px;">click to begin</p>
+  <p style="position:relative; margin-top:28px; font-size:9px; opacity:0.28; letter-spacing:0.30em;">WASD / ARROWS &nbsp;·&nbsp; ENTER to enter &nbsp;·&nbsp; ESC to exit</p>
+</div>
+<script>
+// Starfield on overlay canvas
+(function(){
+  const oc = document.getElementById('starfield');
+  const resize = () => { oc.width = window.innerWidth; oc.height = window.innerHeight; };
+  resize(); window.addEventListener('resize', resize);
+  const ox = oc.getContext('2d');
+  const stars = Array.from({length:180}, () => ({
+    x: Math.random(), y: Math.random(),
+    r: 0.4 + Math.random()*1.2,
+    op: 0.15 + Math.random()*0.55,
+    ph: Math.random()*Math.PI*2,
+    sp: 0.004 + Math.random()*0.012
+  }));
+  function tickStars() {
+    if (!document.getElementById('overlay').style.display ||
+        document.getElementById('overlay').style.display !== 'none') {
+      ox.clearRect(0, 0, oc.width, oc.height);
+      stars.forEach(s => {
+        s.ph += s.sp;
+        const a = s.op * (0.5 + 0.5*Math.sin(s.ph));
+        ox.fillStyle = `rgba(210,200,170,${a})`;
+        ox.beginPath();
+        ox.arc(s.x*oc.width, s.y*oc.height, s.r, 0, Math.PI*2);
+        ox.fill();
+      });
+      requestAnimationFrame(tickStars);
+    }
+  }
+  tickStars();
+})();
+</script>
+
+<!-- Media elements -->
+<audio id="amb"    src="./sources/audio/first_level_loop_1.ogg"  loop preload="auto" style="display:none"></audio>
+<audio id="b1loop" src="./sources/audio/bouble_1_loop_1.ogg"     loop preload="auto" style="display:none"></audio>
+<audio id="kal"    src="./sources/audio/kalevala_21_03_26.ogg"   loop preload="auto" style="display:none"></audio>
+<video id="vid1"    src="./sources/video/desert.mp4"             loop preload="auto" playsinline style="display:none"></video>
+<video id="kal_tex" src="./sources/video/kalevala_texture.mp4"   loop preload="auto" playsinline style="display:none"></video>
+
+<canvas id="c"></canvas>
+
+<script>
+// ─────────────────────────────────────────────
+//  CONFIG
+// ─────────────────────────────────────────────
+const CW = 960, CH = 640;        // viewport
+const WW = 4200, WH = 3000;      // world size
+
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+canvas.width  = CW;
+canvas.height = CH;
+
+// ─────────────────────────────────────────────
+//  IMAGE LOADING
+// ─────────────────────────────────────────────
+function loadImg(base) {
+  const img = new Image();
+  const exts = ['jpg','png','jpeg'];
+  let i = 0;
+  function next() { if (i < exts.length) img.src = base + '.' + exts[i++]; }
+  img.onerror = next;
+  next();
+  return img;
+}
+
+const stoneImg = loadImg('./sources/photo/stone_texture');
+
+let stonePat = null;
+stoneImg.onload = () => { stonePat = ctx.createPattern(stoneImg, 'repeat'); };
+
+// ─────────────────────────────────────────────
+//  WHITE NOISE  (oversized rotating canvas)
+// ─────────────────────────────────────────────
+const NS = Math.ceil(Math.hypot(CW, CH)) + 40;
+const noiseC   = document.createElement('canvas');
+noiseC.width   = NS; noiseC.height = NS;
+const noiseCtx = noiseC.getContext('2d');
+
+function genNoise() {
+  const id = noiseCtx.createImageData(NS, NS);
+  const d  = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = Math.random() * 255 | 0;
+    d[i] = d[i+1] = d[i+2] = v; d[i+3] = 18;
+  }
+  noiseCtx.putImageData(id, 0, 0);
+}
+
+// ─────────────────────────────────────────────
+//  PLAYER
+// ─────────────────────────────────────────────
+const P = {
+  x: WW/2, y: WH/2, w: 46, h: 60, speed: 1.5,
+  vx: 0, vy: 0, walk: 0, moving: false,
+  facing: 1           // 1 = right, -1 = left
+};
+
+// Camera (smooth, world-space top-left)
+const cam = { x: P.x - CW/2, y: P.y - CH/2 };
+
+// ─────────────────────────────────────────────
+//  BUBBLES  — triangle arrangement in world
+// ─────────────────────────────────────────────
+const M = 300; // margin from world edge
+const bubbles = [
+  { wx: M,        wy: M,        r: 62, num: 'I',   id: 1, ph: 0.0  },  // top-left
+  { wx: WW - M,   wy: M,        r: 62, num: 'II',  id: 2, ph: 2.09 },  // top-right
+  { wx: WW / 2,   wy: WH - M,   r: 62, num: 'III', id: 3, ph: 4.19 },  // bottom-center
+];
+
+// ─────────────────────────────────────────────
+//  WORLD OBJECTS  (ancient stones, slabs, ruins)
+// ─────────────────────────────────────────────
+function sr(n) {                          // seeded deterministic random 0..1
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+const worldObjs = [];
+(function genObjs() {
+  for (let i = 0; i < 260; i++) {
+    const x  = 160 + sr(i*7+0) * (WW - 320);
+    const y  = 160 + sr(i*7+1) * (WH - 320);
+    const ok = bubbles.every(b => Math.hypot(x - b.wx, y - b.wy) > 240);
+    const nearCentre = Math.hypot(x - WW/2, y - WH/2) < 180;
+    if (ok && !nearCentre) worldObjs.push({
+      x,   y,
+      t:   sr(i*7+2),               // type selector 0..1
+      sc:  0.55 + sr(i*7+3)*0.95,   // size scale
+      rot: sr(i*7+4) * Math.PI * 2, // rotation
+      op:  0.55 + sr(i*7+5)*0.40    // opacity
+    });
+  }
+})();
+
+// ─────────────────────────────────────────────
+//  LORE FRAGMENTS  (text near rune marks)
+// ─────────────────────────────────────────────
+const LORE_TEXTS = [
+  'the stone remembers',
+  '43°12′N · field recording · basalt wind',
+  'kalevala · runo IV',
+  'where the world was first divided',
+  'ᚠ · beginning · ᚢ · water · ᚦ · force',
+  'sound travels further at night',
+  'the echo has no origin',
+  'rune: the path of water under stone',
+  'origin myth · cycle III',
+  'ᛟ · inheritance · home · property',
+  'the instrument was the stone itself',
+  'fragment · uncatalogued · 2024',
+  'north · 280m · limestone outcrop',
+  'ᚺ · hail · disruption · change',
+  'the recording was lost in transit',
+  'measure the silence between strikes',
+  '60°N · midsummer · no shadow',
+  'seismic event · depth 4.2 km · no felt report',
+  'the body is a field recorder',
+  'ᛁ · ice · stillness · the held breath',
+  'P-wave arrives first · S-wave carries the memory',
+  'anthropology of listening · unfinished',
+  'bedrock contact at 38 metres · granite',
+];
+
+const loreEvents = worldObjs
+  .filter(o => o.t >= 0.53 && o.t < 0.68)
+  .slice(0, LORE_TEXTS.length)
+  .map((o, i) => ({
+    wx: o.x, wy: o.y,
+    text: LORE_TEXTS[i],
+    state: 'idle',   // idle | fadein | hold | fadeout
+    alpha: 0,
+    timer: 0
+  }));
+
+// ─────────────────────────────────────────────
+//  AUDIO  (Chrome / Web Audio API)
+//  Media loaded via HTML elements — browser handles local files natively
+// ─────────────────────────────────────────────
+let AC      = null;
+let masterG = null;
+
+// Web Audio nodes — null = fallback to el.volume
+let vid1Pan   = null, vid1Gain   = null;  // bubble I inside (desert video)
+let b1Pan     = null, b1Gain     = null;  // bubble I approach loop
+let kalPan    = null, kalGain    = null;  // bubble II inside (kalevala vocal)
+let kalTexPan = null, kalTexGain = null;  // bubble II approach (kal_tex video)
+
+// Cached element refs
+const elAmb    = document.getElementById('amb');
+const elB1Loop = document.getElementById('b1loop');
+const elKal    = document.getElementById('kal');
+const elVid1   = document.getElementById('vid1');
+const elKalTex = document.getElementById('kal_tex');
+
+// Research audio points — positioned deterministically, audio loaded in bootAudio
+const RESEARCH_FILES = [
+  'okant_CYL_0456.ogg',
+  'chants_bathhurst.mp3',
+  'korobori.ogg',
+  'bjornsang_CYL_0390.ogg',
+  'familjefadern_CYL_0327.ogg',
+];
+const N_RESEARCH = 14;  // total points in world (cycles through RESEARCH_FILES)
+const researchPts = Array.from({ length: N_RESEARCH }, (_, i) => {
+  // seeded positions — keep away from world edges and bubble centres
+  let wx, wy, tries = 0;
+  do {
+    wx = 350 + sr(i*19 + 3 + tries) * (WW - 700);
+    wy = 350 + sr(i*19 + 7 + tries) * (WH - 700);
+    tries++;
+  } while (tries < 16 && bubbles.some(b => Math.hypot(wx - b.wx, wy - b.wy) < 500));
+  return { wx, wy, el: null, pan: null, gain: null, fileIdx: i % RESEARCH_FILES.length };
+});
+
+
+function bootAudio() {
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  if (AC.state === 'suspended') AC.resume();
+
+  // Output chain: masterG → compressor (light) → destination
+  masterG = AC.createGain();
+  masterG.gain.value = 0.60;
+  const comp = AC.createDynamicsCompressor();
+  comp.threshold.value = -18;
+  comp.knee.value      = 8;
+  comp.ratio.value     = 3;
+  comp.attack.value    = 0.005;
+  comp.release.value   = 0.20;
+  masterG.connect(comp);
+  comp.connect(AC.destination);
+
+  // Listener: fixed at origin, facing –Z (top-down: screen-right = audio +X, screen-down = audio +Z)
+  const L = AC.listener;
+  if (L.positionX) {
+    L.positionX.value = 0; L.positionY.value = 0; L.positionZ.value = 0;
+    L.forwardX.value  = 0; L.forwardY.value  = 0; L.forwardZ.value  = -1;
+    L.upX.value       = 0; L.upY.value       = 1; L.upZ.value       =  0;
+  } else {
+    L.setPosition(0, 0, 0);
+    L.setOrientation(0, 0, -1,  0, 1, 0);
+  }
+
+  // Ambient: native <audio>, no Web Audio routing needed
+  elAmb.volume = 0.72;
+  elAmb.play().catch(e => console.warn('amb:', e));
+
+  // ── captureStream → HRTF PannerNode (true binaural) ──────────────────────
+  //  el.volume = 1/BOOST (≈0.033): Chrome captures post-volume, so this is near-silent
+  //  boost ×30 inside Web Audio restores full level
+  //  PannerNode: rolloffFactor=0 → volume controlled entirely by our gain node
+  //              direction normalised to unit sphere → full HRTF coloring every frame
+  const BOOST = 30;
+
+  function makePanner() {
+    const p = AC.createPanner();
+    p.panningModel   = 'HRTF';
+    p.distanceModel  = 'inverse';
+    p.refDistance    = 1;
+    p.maxDistance    = 10000;
+    p.rolloffFactor  = 0;     // distance attenuation handled by our gain node
+    p.coneInnerAngle = 360;   // omnidirectional source
+    p.coneOuterAngle = 360;
+    // default: straight ahead (–Z)
+    if (p.positionX) { p.positionX.value = 0; p.positionY.value = 0; p.positionZ.value = -1; }
+    else p.setPosition(0, 0, -1);
+    return p;
+  }
+
+  function setupSpatial(el, onDone) {
+    el.volume = 1 / BOOST;
+    el.play().catch(() => {});
+
+    function tryCapture() {
+      try {
+        const cs = el.captureStream || el.mozCaptureStream;
+        if (!cs) throw new Error('no captureStream');
+        const stream = cs.call(el);
+        if (!stream.getAudioTracks().length) throw new Error('no audio tracks yet');
+        const src   = AC.createMediaStreamSource(stream);
+        const boost = AC.createGain(); boost.gain.value = BOOST;
+        const pan   = makePanner();
+        const gain  = AC.createGain(); gain.gain.value = 0;
+        src.connect(boost); boost.connect(pan); pan.connect(gain); gain.connect(masterG);
+        onDone(pan, gain);
+        console.log('[audio] HRTF binaural OK:', el.id || el.src.split('/').pop());
+      } catch(e) {
+        console.warn('[audio] fallback el.volume:', el.id || '', e.message);
+        el.volume = 1;
+        onDone(null, null);
+      }
+    }
+
+    if (el.readyState >= 3) tryCapture();
+    else el.addEventListener('playing', tryCapture, { once: true });
+  }
+
+  // Spatial sources
+  setupSpatial(elVid1,   (p, g) => { vid1Pan   = p; vid1Gain   = g; });
+  setupSpatial(elB1Loop, (p, g) => { b1Pan     = p; b1Gain     = g; });
+  setupSpatial(elKal,    (p, g) => { kalPan    = p; kalGain    = g; });
+  setupSpatial(elKalTex, (p, g) => { kalTexPan = p; kalTexGain = g; });
+
+  // Research points — create Audio elements dynamically, cycle through files
+  researchPts.forEach((pt) => {
+    const el = new Audio();
+    el.src   = './sources/audio/research/' + RESEARCH_FILES[pt.fileIdx];
+    el.loop  = true;
+    pt.el    = el;
+    setupSpatial(el, (p, g) => { pt.pan = p; pt.gain = g; });
+  });
+}
+
+// ─────────────────────────────────────────────
+//  INPUT
+// ─────────────────────────────────────────────
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Enter') {
+    if (enteredBubble) { enteredBubble = null; return; }
+    for (const b of bubbles) {
+      if (Math.hypot(P.x - b.wx, P.y - b.wy) < b.r + P.w * 0.8) {
+        if (b.id === 1) { elVid1.currentTime = 0; elVid1.play().catch(() => {}); elB1Loop.currentTime = 0; }
+        if (b.id === 2) { elKalTex.currentTime = 0; elKalTex.play().catch(() => {}); elKal.currentTime = 0; elKal.play().catch(() => {}); }
+        enteredBubble = b; lastEnteredBubble = b; bubbleFlash = 1.0; shakeMag = 7;
+        visitedBubbles.add(b.id);
+        if (visitedBubbles.size === 3 && culminationTimer < 0) culminationTimer = 0;
+        break;
+      }
+    }
+  }
+  if (e.code === 'Escape') enteredBubble = null;
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+document.getElementById('overlay').addEventListener('click', () => {
+  document.getElementById('overlay').style.display = 'none';
+  bootAudio();
+}, { once: true });
+
+// ─────────────────────────────────────────────
+//  PARTICLES  (atmospheric dust / embers)
+// ─────────────────────────────────────────────
+const PTCOUNT = 55;
+const particles = [];
+(function initParticles() {
+  for (let i = 0; i < PTCOUNT; i++) {
+    particles.push({
+      x:  Math.random() * CW,       // screen-space x
+      y:  Math.random() * CH,       // screen-space y
+      vx: (Math.random() - 0.5) * 0.18,
+      vy: -(0.08 + Math.random() * 0.22),  // drift upward
+      r:  0.8 + Math.random() * 2.2,
+      op: 0.08 + Math.random() * 0.22,
+      flicker: Math.random() * Math.PI * 2  // phase offset for opacity shimmer
+    });
+  }
+})();
+
+function updateParticles() {
+  for (const p of particles) {
+    p.x  += p.vx + Math.sin(t * 0.008 + p.flicker) * 0.08 + windVx;
+    p.y  += p.vy + windVy;
+    p.flicker += 0.012;
+    // wrap: off top → respawn at bottom
+    if (p.y < -4)  { p.y = CH + 4;  p.x = Math.random() * CW; }
+    if (p.y > CH+4){ p.y = -4;       p.x = Math.random() * CW; }
+    if (p.x < -4)  { p.x = CW + 4; }
+    if (p.x > CW+4){ p.x = -4; }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const shimmer = 0.7 + 0.3 * Math.sin(p.flicker * 1.4);
+    ctx.save();
+    ctx.globalAlpha = p.op * shimmer;
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 2.2);
+    g.addColorStop(0, 'rgba(220,205,165,1)');
+    g.addColorStop(1, 'rgba(220,205,165,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2.2, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────
+let t = 0, noiseRot = 0, noiseTick = 0;
+
+// Bubble entry state
+let enteredBubble     = null;
+let lastEnteredBubble = null;
+let bubbleZoom        = 0;
+let bubbleFlash       = 0;
+let bubbleIrisR       = 0;
+
+// Visited bubbles + culmination
+const visitedBubbles  = new Set();
+let culminationAlpha  = 0;   // 0→1 fade when all 3 visited
+let culminationTimer  = -1;
+
+// Player light trail
+const playerTrail = [];
+const MAX_TRAIL   = 18;
+
+// Screen shake
+let shakeX = 0, shakeY = 0, shakeMag = 0;
+
+// Wind gust
+let windVx = 0, windVy = 0, windTimer = 0, windNext = 280 + Math.random()*400;
+
+// Idle breath phase
+let breathPhase = 0;
+
+// ── Footprints ─────────────────────────────
+const footprints   = [];
+const MAX_PRINTS   = 36;
+let   footSide     = 1;        // alternates ±1 for L/R offset
+let   printTimer   = 0;
+
+// ─────────────────────────────────────────────
+//  UPDATE
+// ─────────────────────────────────────────────
+function update() {
+  let vx = 0, vy = 0;
+  if (keys['ArrowLeft']  || keys['KeyA']) vx -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) vx += 1;
+  if (keys['ArrowUp']    || keys['KeyW']) vy -= 1;
+  if (keys['ArrowDown']  || keys['KeyS']) vy += 1;
+  if (vx && vy) { vx *= 0.707; vy *= 0.707; }
+
+  P.moving = (vx !== 0 || vy !== 0);
+  if (vx !== 0) P.facing = vx > 0 ? 1 : -1;
+  if (P.moving) {
+    P.walk += 0.08;
+  }
+  // inertia: smooth velocity transitions
+  const tvx = vx * P.speed, tvy = vy * P.speed;
+  P.vx += (tvx - P.vx) * 0.20;
+  P.vy += (tvy - P.vy) * 0.20;
+  P.x  = Math.max(P.w/2, Math.min(WW - P.w/2, P.x + P.vx));
+  P.y  = Math.max(P.h/2, Math.min(WH - P.h/2, P.y + P.vy));
+
+  // ── Stone collision: upright stones (t<0.18) and pillars (0.74≤t<0.83) ──
+  for (const o of worldObjs) {
+    if (o.t >= 0.18 && !(o.t >= 0.74 && o.t < 0.83)) continue;
+    const cr  = 9 * o.sc;
+    const pdx = P.x - o.x, pdy = P.y - o.y;
+    const pd  = Math.hypot(pdx, pdy);
+    const minD = cr + P.w * 0.32;
+    if (pd < minD && pd > 0.1) {
+      const push = (minD - pd) / pd;
+      P.x += pdx * push; P.y += pdy * push;
+    }
+  }
+
+  // Smooth camera follow
+  const tx = P.x - CW/2, ty = P.y - CH/2;
+  cam.x += (tx - cam.x) * 0.085;
+  cam.y += (ty - cam.y) * 0.085;
+  cam.x  = Math.max(0, Math.min(WW - CW, cam.x));
+  cam.y  = Math.max(0, Math.min(WH - CH, cam.y));
+
+  // ── HRTF position helper ─────────────────────────────────────────────
+  //  Normalises world-space direction vector (dx, dy) onto the unit sphere.
+  //  HRTF only cares about direction, NOT distance — normalising gives full
+  //  binaural coloring (ITD + ILD) at all distances.
+  //  Coordinate mapping (listener faces –Z):
+  //    world +X (right on screen)  → audio +X  → right ear
+  //    world –X (left on screen)   → audio –X  → left ear
+  //    world –Y (above player)     → audio –Z  → in front
+  //    world +Y (below player)     → audio +Z  → behind
+  function setPPos(panner, dx, dy) {
+    if (!panner) return;
+    const dist = Math.hypot(dx, dy);
+    const nx = dist < 1 ? 0   : dx / dist;   // normalised X  (left/right)
+    const nz = dist < 1 ? -1  : dy / dist;   // normalised Z  (front/back)
+    if (panner.positionX !== undefined) {
+      panner.positionX.value = nx;
+      panner.positionY.value = 0;
+      panner.positionZ.value = nz;
+    } else {
+      panner.setPosition(nx, 0, nz);
+    }
+  }
+
+  // Which bubble is active (for inside-vol gating)
+  const activeBId = (enteredBubble || lastEnteredBubble) ? (enteredBubble || lastEnteredBubble).id : 0;
+
+  // ── Bubble I approach: bouble_1_loop_1 ──────────────────────────────
+  {
+    const b1 = bubbles[0];
+    const dx = b1.wx - P.x, dy = b1.wy - P.y;
+    const dist = Math.hypot(dx, dy);
+    const fade = Math.max(0, 1 - dist / 1400);
+    const vol  = Math.min(1, fade * fade * 0.92) * (1 - bubbleZoom);
+    setPPos(b1Pan, dx, dy);
+    if (b1Gain)        b1Gain.gain.value = vol;
+    else if (elB1Loop) elB1Loop.volume   = Math.min(1, vol * 0.9);
+  }
+
+  // ── Bubble I inside: desert.mp4 audio ───────────────────────────────
+  {
+    const b1 = bubbles[0];
+    const dx = b1.wx - P.x, dy = b1.wy - P.y;
+    const vol = activeBId === 1 ? bubbleZoom * 0.92 : 0;
+    setPPos(vid1Pan, dx, dy);
+    if (vid1Gain)  vid1Gain.gain.value = vol;
+    else           elVid1.volume       = Math.min(1, vol * 0.9);
+  }
+
+  // ── Bubble II approach: kalevala_texture.mp4 audio ──────────────────
+  {
+    const b2 = bubbles[1];
+    const dx = b2.wx - P.x, dy = b2.wy - P.y;
+    const dist = Math.hypot(dx, dy);
+    const fade = Math.max(0, 1 - dist / 1400);
+    const vol  = Math.min(1, fade * fade * 0.92) * (1 - bubbleZoom);
+    setPPos(kalTexPan, dx, dy);
+    if (kalTexGain)  kalTexGain.gain.value = vol;
+    else             elKalTex.volume       = Math.min(1, vol * 0.9);
+  }
+
+  // ── Bubble II inside: kalevala_21_03_26.wav ─────────────────────────
+  {
+    const b2 = bubbles[1];
+    const dx = b2.wx - P.x, dy = b2.wy - P.y;
+    const vol = activeBId === 2 ? bubbleZoom * 0.92 : 0;
+    setPPos(kalPan, dx, dy);
+    if (kalGain)  kalGain.gain.value = vol;
+    else          elKal.volume       = Math.min(1, vol * 0.9);
+  }
+
+  // ── Research points ─────────────────────────────────────────────────
+  researchPts.forEach(pt => {
+    if (!pt.el) return;
+    const dx   = pt.wx - P.x, dy = pt.wy - P.y;
+    const dist = Math.hypot(dx, dy);
+    const fade = Math.max(0, 1 - dist / 400);
+    const vol  = fade * fade * 0.80 * (1 - bubbleZoom);
+    setPPos(pt.pan, dx, dy);
+    if (pt.gain)  pt.gain.gain.value = vol;
+    else          pt.el.volume       = Math.min(1, vol * 0.9);
+  });
+
+  // Bubble zoom + iris animation — slower exit for smoother audio fade
+  const zTarget = enteredBubble ? 1 : 0;
+  const zLerp   = zTarget > bubbleZoom ? 0.10 : 0.055;   // enter fast, exit slow
+  bubbleZoom += (zTarget - bubbleZoom) * zLerp;
+  if (bubbleZoom < 0.002) bubbleZoom = 0;
+  // iris: when entering, radius expands from bubble screen-pos to cover screen
+  if (enteredBubble) {
+    const maxR = Math.hypot(CW, CH) * 0.6;
+    bubbleIrisR = Math.min(maxR, bubbleIrisR + (maxR - bubbleIrisR) * 0.08 + 4);
+  } else {
+    bubbleIrisR *= 0.88;
+    if (bubbleIrisR < 1) bubbleIrisR = 0;
+  }
+
+  // ── footprints ────────────────────────────
+  if (P.moving && !enteredBubble) {
+    printTimer++;
+    if (printTimer >= 10) {
+      printTimer = 0;
+      footSide *= -1;
+      const perpX = -P.vy * 0.18, perpY = P.vx * 0.18;
+      footprints.push({
+        wx:   P.x + footSide * perpX,
+        wy:   P.y + 14 + footSide * perpY,
+        age:  0,
+        side: footSide,
+        ang:  Math.atan2(P.vy, P.vx)
+      });
+      if (footprints.length > MAX_PRINTS) footprints.shift();
+    }
+  }
+  for (const fp of footprints) fp.age++;
+
+  // ── Lore text state machine ──────────────────
+  for (const le of loreEvents) {
+    const d = Math.hypot(P.x - le.wx, P.y - le.wy);
+    if (le.state === 'idle' && d < 68) { le.state = 'fadein'; le.timer = 0; }
+    if (le.state === 'fadein')  {
+      le.alpha = Math.min(1, le.alpha + 0.022);
+      if (++le.timer > 22) le.state = 'hold';
+    }
+    if (le.state === 'hold') {
+      if (++le.timer > 200 || d > 130) { le.state = 'fadeout'; le.timer = 0; }
+    }
+    if (le.state === 'fadeout') {
+      le.alpha = Math.max(0, le.alpha - 0.016);
+      if (le.alpha === 0) le.state = 'idle';
+    }
+  }
+
+  // ── Screen shake decay ───────────────────
+  if (shakeMag > 0.3) {
+    shakeX = (Math.random()-0.5) * shakeMag * 2;
+    shakeY = (Math.random()-0.5) * shakeMag * 2;
+    shakeMag *= 0.72;
+  } else { shakeX = 0; shakeY = 0; shakeMag = 0; }
+
+  // ── Wind gust ────────────────────────────
+  windTimer++;
+  if (windTimer >= windNext) {
+    const ang = Math.random() * Math.PI * 2;
+    windVx = Math.cos(ang) * (0.25 + Math.random() * 0.35);
+    windVy = Math.sin(ang) * (0.25 + Math.random() * 0.35);
+    windTimer = 0;
+    windNext = 300 + Math.random() * 500;
+    setTimeout(() => { windVx *= 0.1; windVy *= 0.1; }, 1200 + Math.random()*800);
+  }
+  windVx *= 0.994; windVy *= 0.994;
+
+  // ── Player trail ─────────────────────────
+  if (P.moving && !enteredBubble) {
+    playerTrail.push({ wx: P.x, wy: P.y, age: 0 });
+    if (playerTrail.length > MAX_TRAIL) playerTrail.shift();
+  }
+  for (const tr of playerTrail) tr.age++;
+
+  // ── Culmination fade-in ───────────────────
+  if (culminationTimer >= 0) {
+    culminationTimer++;
+    culminationAlpha = Math.min(1, culminationAlpha + 0.004);
+  }
+
+  // ── Idle breathing ───────────────────────
+  breathPhase += P.moving ? 0 : 0.018;
+
+  // ── Ambient duck when inside bubble ─────────────
+  {
+    const ambTarget = enteredBubble ? 0.18 : 0.72;
+    elAmb.volume += (ambTarget - elAmb.volume) * 0.04;
+  }
+
+  updateParticles();
+  if (bubbleFlash > 0.005) bubbleFlash *= 0.80; else bubbleFlash = 0;
+
+  t++;
+  noiseRot += 0.0013;
+  noiseTick++;
+  if (noiseTick % 2 === 0) genNoise();
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: PLAYER TRAIL
+// ─────────────────────────────────────────────
+function drawPlayerTrail() {
+  for (let i = 0; i < playerTrail.length; i++) {
+    const tr = playerTrail[i];
+    const sx = tr.wx - cam.x, sy = tr.wy - cam.y;
+    if (sx < -30 || sx > CW+30 || sy < -30 || sy > CH+30) continue;
+    const life = (1 - tr.age / 28) * (i / playerTrail.length);
+    if (life <= 0) continue;
+    const rr = 6 + i * 0.5;
+    ctx.save();
+    ctx.globalAlpha = life * 0.18;
+    const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, rr);
+    g.addColorStop(0, 'rgba(210,195,155,1)');
+    g.addColorStop(1, 'rgba(210,195,155,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: FOOTPRINTS
+// ─────────────────────────────────────────────
+function drawFootprints() {
+  for (const fp of footprints) {
+    const sx = fp.wx - cam.x, sy = fp.wy - cam.y;
+    if (sx < -16 || sx > CW+16 || sy < -16 || sy > CH+16) continue;
+    const life = Math.max(0, 1 - fp.age / 180);
+    ctx.save();
+    ctx.globalAlpha = life * 0.28;
+    ctx.translate(sx, sy);
+    ctx.rotate(fp.ang + Math.PI/2);
+    ctx.fillStyle = 'rgba(0,0,0,0.90)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 2.8, 4.5, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: WORLD OBJECTS
+// ─────────────────────────────────────────────
+function drawWorldObjects() {
+  const C_DARK  = 'rgba(55,46,33,0.95)';
+  const C_MID   = 'rgba(88,74,54,0.90)';
+  const C_LIGHT = 'rgba(140,118,85,0.55)';
+
+  for (const o of worldObjs) {
+    const sx = o.x - cam.x, sy = o.y - cam.y;
+    if (sx < -160 || sx > CW+160 || sy < -160 || sy > CH+160) continue;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(o.rot);
+    ctx.globalAlpha = o.op;
+    const s = o.sc;
+
+    if (o.t < 0.18) {
+      // ── upright standing stone ─────────────
+      const h = 28*s, w = 12*s;
+      // ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath(); ctx.ellipse(2*s, h*0.92, w*0.9, 3.5*s, 0, 0, Math.PI*2); ctx.fill();
+      // stone body
+      ctx.fillStyle = C_DARK; ctx.strokeStyle = C_MID; ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-w/2, h*0.9);
+      ctx.lineTo(-w*0.55, -h*0.2);
+      ctx.quadraticCurveTo(-w*0.1, -h, w*0.15, -h*0.95);
+      ctx.quadraticCurveTo(w*0.65, -h*0.5, w/2, h*0.9);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      // highlight crack
+      ctx.strokeStyle = C_LIGHT; ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(-w*0.10, h*0.8); ctx.lineTo(-w*0.18, -h*0.15); ctx.stroke();
+
+    } else if (o.t < 0.36) {
+      // ── flat slab on ground ───────────────
+      const w = 38*s, h = 16*s;
+      ctx.fillStyle = C_DARK; ctx.strokeStyle = C_MID; ctx.lineWidth = 0.7;
+      ctx.fillRect(-w/2, -h/2, w, h);
+      ctx.strokeRect(-w/2, -h/2, w, h);
+      // surface crack lines
+      ctx.strokeStyle = 'rgba(10,8,5,0.65)'; ctx.lineWidth = 0.45;
+      ctx.beginPath();
+      ctx.moveTo(-w*0.15, -h*0.2); ctx.lineTo(w*0.28, h*0.35); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo( w*0.05, -h*0.40); ctx.lineTo(w*0.12, h*0.25); ctx.stroke();
+      // top edge highlight
+      ctx.strokeStyle = C_LIGHT; ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.moveTo(-w/2, -h/2); ctx.lineTo(w/2, -h/2); ctx.stroke();
+
+    } else if (o.t < 0.53) {
+      // ── rock cluster ──────────────────────
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath(); ctx.ellipse(2*s, 9*s, 18*s, 4*s, 0, 0, Math.PI*2); ctx.fill();
+      const rocks = [
+        [0,    0,    9*s],
+        [ 8*s, -2*s, 6*s],
+        [-7*s,  2*s, 7*s],
+        [ 3*s,  5*s, 4*s]
+      ];
+      rocks.forEach(([rx, ry, rr]) => {
+        ctx.fillStyle = C_DARK; ctx.strokeStyle = C_MID; ctx.lineWidth = 0.6;
+        ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      });
+
+    } else if (o.t < 0.68) {
+      // ── ground rune / carved symbol ───────
+      // proximity glow
+      const runePlayerDist = Math.hypot(P.x - o.x, P.y - o.y);
+      if (runePlayerDist < 130) {
+        const gf = Math.max(0, (130 - runePlayerDist) / 130);
+        const rg2 = ctx.createRadialGradient(0,0,0, 0,0,28*s);
+        rg2.addColorStop(0, `rgba(190,165,95,${gf*0.42})`);
+        rg2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = rg2;
+        ctx.beginPath(); ctx.arc(0, 0, 28*s, 0, Math.PI*2); ctx.fill();
+      }
+      const runeAlpha = runePlayerDist < 130
+        ? o.op + (1-o.op)*Math.max(0,(130-runePlayerDist)/130)*0.55
+        : o.op;
+      ctx.strokeStyle = `rgba(90,78,58,${runeAlpha * 0.65})`;
+      ctx.lineWidth = 0.9 * s;
+      const rs = 9 * s;
+      ctx.beginPath(); ctx.arc(0, 0, rs, 0, Math.PI*2); ctx.stroke();
+      // 4 radial spokes
+      for (let a = 0; a < 4; a++) {
+        const ang = (a/4) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang)*rs*0.38, Math.sin(ang)*rs*0.38);
+        ctx.lineTo(Math.cos(ang)*rs,      Math.sin(ang)*rs);
+        ctx.stroke();
+      }
+      // inner dot
+      ctx.fillStyle = `rgba(75,64,46,${runeAlpha * 0.6})`;
+      ctx.beginPath(); ctx.arc(0, 0, rs*0.18, 0, Math.PI*2); ctx.fill();
+
+    } else if (o.t < 0.83) {
+      // ── broken pillar fragment ─────────────
+      const w = 9*s, h = 38*s;
+      const topY = -h + sr(o.rot*31)*8*s;
+      // shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(3*s, h*0.28, w*0.8, 2.5*s, 0, 0, Math.PI*2); ctx.fill();
+      // pillar
+      ctx.fillStyle = C_DARK; ctx.strokeStyle = C_MID; ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-w/2, h*0.28);
+      ctx.lineTo(-w/2, topY + 5*s*sr(o.op*7));
+      ctx.lineTo(0,    topY - 4*s);
+      ctx.lineTo(w/2,  topY + 3*s*sr(o.rot*13));
+      ctx.lineTo(w/2,  h*0.28);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      // side groove
+      ctx.strokeStyle = C_LIGHT; ctx.lineWidth = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(-w*0.12, h*0.20); ctx.lineTo(-w*0.18, topY+4*s); ctx.stroke();
+
+    } else {
+      // ── scattered pebble field ────────────
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      ctx.beginPath(); ctx.ellipse(0, 8*s, 22*s, 4*s, 0, 0, Math.PI*2); ctx.fill();
+      for (let k = 0; k < 7; k++) {
+        const px = (sr(k*5+o.t*100)*30 - 15)*s;
+        const py = (sr(k*5+1+o.t*100)*18 - 9)*s;
+        const pr = (1.5 + sr(k*5+2+o.t*100)*3.5)*s;
+        ctx.fillStyle = C_DARK; ctx.strokeStyle = C_MID; ctx.lineWidth = 0.45;
+        ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      }
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: BUBBLE BLEED — interior bleeds into world on approach
+// ─────────────────────────────────────────────
+function drawBubbleBleed() {
+  const BLEED_DIST = 520;
+  const elV1 = elVid1;
+  const elKT = elKalTex;
+
+  bubbles.forEach(b => {
+    const sx   = b.wx - cam.x;
+    const sy   = b.wy - cam.y;
+    const dist = Math.hypot(P.x - b.wx, P.y - b.wy);
+    if (dist > BLEED_DIST) return;
+
+    const prox       = 1 - dist / BLEED_DIST;
+    const bleedAlpha = prox * prox * prox * 0.52;
+    const bleedR     = b.r + prox * 220;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sx, sy, bleedR, 0, Math.PI * 2);
+    ctx.clip();
+
+    // draw video cover-filling the bleed circle
+    const bleedVideo = el => {
+      const vw = el.videoWidth  || 320;
+      const vh = el.videoHeight || 240;
+      const scale = (bleedR * 2) / Math.min(vw, vh);
+      const dw = vw * scale, dh = vh * scale;
+      ctx.globalAlpha = bleedAlpha;
+      ctx.drawImage(el, sx - dw / 2, sy - dh / 2, dw, dh);
+    };
+
+    if (b.id === 1) {
+      if (elV1 && elV1.readyState >= 2) {
+        bleedVideo(elV1);
+      } else {
+        const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, bleedR);
+        g.addColorStop(0,   `rgba(255,180,60,${bleedAlpha * 1.2})`);
+        g.addColorStop(0.6, `rgba(200,100,20,${bleedAlpha * 0.6})`);
+        g.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(sx - bleedR, sy - bleedR, bleedR * 2, bleedR * 2);
+      }
+    } else if (b.id === 2) {
+      if (elKT && elKT.readyState >= 2) {
+        bleedVideo(elKT);
+      } else {
+        const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, bleedR);
+        g.addColorStop(0,   `rgba(80,60,200,${bleedAlpha * 1.2})`);
+        g.addColorStop(0.6, `rgba(30,20,100,${bleedAlpha * 0.6})`);
+        g.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(sx - bleedR, sy - bleedR, bleedR * 2, bleedR * 2);
+      }
+    } else if (b.id === 3) {
+      const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, bleedR);
+      g.addColorStop(0,    `rgba(255,140,20,${bleedAlpha * 1.1})`);
+      g.addColorStop(0.4,  `rgba(180,60,10,${bleedAlpha * 0.8})`);
+      g.addColorStop(0.75, `rgba(80,20,5,${bleedAlpha * 0.4})`);
+      g.addColorStop(1,    'rgba(0,0,0,0)');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = g;
+      ctx.fillRect(sx - bleedR, sy - bleedR, bleedR * 2, bleedR * 2);
+    }
+
+    // feather the clip edge
+    ctx.globalAlpha = 1;
+    const edge = ctx.createRadialGradient(sx, sy, bleedR * 0.55, sx, sy, bleedR);
+    edge.addColorStop(0, 'rgba(0,0,0,0)');
+    edge.addColorStop(1, `rgba(0,0,0,${bleedAlpha * 1.6})`);
+    ctx.fillStyle = edge;
+    ctx.fillRect(sx - bleedR, sy - bleedR, bleedR * 2, bleedR * 2);
+
+    ctx.restore();
+  });
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: 3-D SPHERE BUBBLE  (natural stone, biome palette)
+// ─────────────────────────────────────────────
+const BUBBLE_PALETTES = [
+  // I — desert sandstone / ochre terrain
+  { b0:'88,70,50',  b1:'40,30,18',  b2:'12,8,4',
+    df:'195,188,175', dm:'112,106,96',
+    rng:'185,172,155', inn:'110,100,85',
+    halo:'118,108,92', num_n:'222,215,205', num_f:'148,138,122' },
+  // II — kalevala slate / cold mist
+  { b0:'50,66,78',  b1:'24,34,46',  b2:'7,11,18',
+    df:'182,192,205', dm:'105,115,128',
+    rng:'168,182,198', inn:'100,115,135',
+    halo:'98,115,135', num_n:'208,218,228', num_f:'128,145,162' },
+  // III — ritual moss / lichen stone
+  { b0:'44,62,44',  b1:'20,34,20',  b2:'6,12,6',
+    df:'182,196,178', dm:'106,122,102',
+    rng:'158,178,152', inn:'95,118,90',
+    halo:'92,122,88',  num_n:'210,222,205', num_f:'132,155,125' },
+];
+
+function drawBubble(b) {
+  const sx = b.wx - cam.x, sy = b.wy - cam.y;
+  if (sx < -b.r * 4 || sx > CW + b.r * 4) return;
+  if (sy < -b.r * 4 || sy > CH + b.r * 4) return;
+
+  const dist     = Math.hypot(P.x - b.wx, P.y - b.wy);
+  const near     = dist < b.r + P.w * 0.75;
+  const nearFact = Math.max(0, 1 - dist / (b.r * 5));
+  // organic pulse: two overlapping sine freqs
+  const pulse = 1 + (Math.sin(t * 0.031 + b.ph) * 0.022
+                   + Math.sin(t * 0.019 + b.ph * 1.6) * 0.011)
+                   * (1 + nearFact * 1.4);
+  const r   = b.r * pulse;
+  const pal = BUBBLE_PALETTES[b.id - 1];
+
+  // ── clipped interior ─────────────────────────────────────────
+  ctx.save();
+  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.clip();
+
+  // ① Stone base — dark, biome-tinted
+  const base = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+  base.addColorStop(0,    `rgba(${pal.b0},${near ? 0.78 : 0.50})`);
+  base.addColorStop(0.62, `rgba(${pal.b1},${near ? 0.86 : 0.60})`);
+  base.addColorStop(1,    `rgba(${pal.b2},${near ? 0.96 : 0.75})`);
+  ctx.fillStyle = base;
+  ctx.fillRect(sx-r, sy-r, r*2, r*2);
+
+  // ② Video frame (I: desert, II: kal_tex)
+  {
+    const vidEl = b.id === 1 ? elVid1 : b.id === 2 ? elKalTex : null;
+    if (vidEl && vidEl.readyState >= 2) {
+      const vw = vidEl.videoWidth || 1, vh = vidEl.videoHeight || 1;
+      const scale = (r * 2) / Math.min(vw, vh);
+      const dw = vw * scale, dh = vh * scale;
+      ctx.globalAlpha = near ? 0.70 : 0.45;
+      ctx.drawImage(vidEl, sx - dw/2, sy - dh/2, dw, dh);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ③ Organic surface patches — lichen / mineral deposits
+  for (let k = 0; k < 7; k++) {
+    const ox = (sr(b.id*41 + k*9)     - 0.5) * r * 1.3;
+    const oy = (sr(b.id*41 + k*9 + 1) - 0.5) * r * 1.3;
+    const pr = (0.06 + sr(b.id*41 + k*9 + 2) * 0.16) * r;
+    const pa = (0.03 + sr(b.id*41 + k*9 + 3) * 0.07) * (near ? 1.6 : 0.9);
+    ctx.fillStyle = `rgba(${pal.dm},${pa})`;
+    ctx.beginPath(); ctx.arc(sx + ox, sy + oy, pr, 0, Math.PI*2); ctx.fill();
+  }
+
+  // ④ Diffuse light — cool, off-axis
+  const diff = ctx.createRadialGradient(sx - r*0.28, sy - r*0.34, 0, sx, sy, r*1.05);
+  diff.addColorStop(0,   `rgba(${pal.df},${near ? 0.58 : 0.30})`);
+  diff.addColorStop(0.55,`rgba(${pal.dm},${near ? 0.18 : 0.08})`);
+  diff.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = diff;
+  ctx.fillRect(sx-r, sy-r, r*2, r*2);
+
+  // ⑤ Specular — cold bright point (wet stone feel)
+  const specX = sx - r*0.28, specY = sy - r*0.33;
+  const spec  = ctx.createRadialGradient(specX, specY, 0, specX, specY, r*0.22);
+  spec.addColorStop(0,   `rgba(230,238,242,${near ? 0.68 : 0.24})`);
+  spec.addColorStop(0.5, `rgba(230,238,242,${near ? 0.10 : 0.03})`);
+  spec.addColorStop(1,   'rgba(230,238,242,0)');
+  ctx.fillStyle = spec;
+  ctx.fillRect(sx-r, sy-r, r*2, r*2);
+
+  // ⑥ Secondary micro-specular (surface moisture)
+  const s2x = sx + r*0.20, s2y = sy - r*0.08;
+  const spec2 = ctx.createRadialGradient(s2x, s2y, 0, s2x, s2y, r*0.09);
+  spec2.addColorStop(0, `rgba(215,228,232,${near ? 0.25 : 0.07})`);
+  spec2.addColorStop(1, 'rgba(215,228,232,0)');
+  ctx.fillStyle = spec2;
+  ctx.fillRect(sx-r, sy-r, r*2, r*2);
+
+  // ⑦ Rim shadow — deep bottom-right
+  const rim = ctx.createRadialGradient(sx + r*0.22, sy + r*0.28, r*0.50, sx, sy, r);
+  rim.addColorStop(0, 'rgba(0,0,0,0)');
+  rim.addColorStop(1, `rgba(0,0,0,${near ? 0.55 : 0.32})`);
+  ctx.fillStyle = rim;
+  ctx.fillRect(sx-r, sy-r, r*2, r*2);
+
+  ctx.restore();
+
+  // ── exterior (no clip) ───────────────────────────────────────
+  ctx.save();
+
+  // ⑧ Outer ring — stone-coloured, thin
+  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.strokeStyle = near ? `rgba(${pal.rng},0.82)` : `rgba(${pal.rng},0.35)`;
+  ctx.lineWidth   = near ? 1.4 : 0.8;
+  ctx.stroke();
+
+  // ⑨ Growth rings — offset concentric arcs (strata feel)
+  ctx.beginPath(); ctx.arc(sx + r*0.05, sy + r*0.04, r * 0.70, 0, Math.PI*2);
+  ctx.strokeStyle = near ? `rgba(${pal.inn},0.16)` : `rgba(${pal.inn},0.06)`;
+  ctx.lineWidth = 0.5; ctx.stroke();
+
+  ctx.beginPath(); ctx.arc(sx - r*0.07, sy - r*0.05, r * 0.43, 0, Math.PI*2);
+  ctx.strokeStyle = near ? `rgba(${pal.inn},0.10)` : `rgba(${pal.inn},0.04)`;
+  ctx.stroke();
+
+  // ⑩ Outer halo — cool mineral mist
+  const halo = ctx.createRadialGradient(sx, sy, r*0.75, sx, sy, r*2.4);
+  halo.addColorStop(0, `rgba(${pal.halo},${near ? 0.11 : 0.04})`);
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(sx, sy, r*2.4, 0, Math.PI*2); ctx.fill();
+
+  // ⑪ Numeral — Cormorant Garamond, light weight
+  const fSz = Math.round(r * 0.42);
+  ctx.font         = `300 ${fSz}px Palatino, 'Palatino Linotype', Georgia, serif`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle    = 'rgba(0,0,0,0.42)';
+  ctx.fillText(b.num, sx+1, sy+1);
+  ctx.fillStyle = near ? `rgba(${pal.num_n},0.88)` : `rgba(${pal.num_f},0.38)`;
+  ctx.fillText(b.num, sx, sy);
+
+  // ⑫ Entry hint
+  if (near) {
+    ctx.font      = `11px Menlo, 'Courier New', monospace`;
+    ctx.fillStyle = `rgba(${pal.num_f},0.35)`;
+    ctx.fillText('[ enter ]', sx, sy + r + 14);
+  }
+
+  ctx.restore();
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: GRAPHIC CHARACTER (pure canvas)
+// ─────────────────────────────────────────────
+
+// Rounded rect path helper
+function rRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y,     x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x,     y + h, x,     y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y,         x + r, y);
+  ctx.closePath();
+}
+
+function drawChar(cx, cy, bob, lean, facing, wp, moving) {
+  const s  = P.h;            // scale unit = player height
+  const lw = Math.max(1.4, s * 0.030);
+
+  // color palette — B&W graphic
+  const C_FILL    = 'rgba(242,238,228,0.97)';   // near-white body
+  const C_DARK    = 'rgba(18,14,10,0.93)';       // near-black stroke & dark fills
+  const C_SHADE   = 'rgba(55,48,38,0.85)';       // mid-dark shade
+  const C_DETAIL  = 'rgba(30,26,18,0.50)';       // subtle details
+
+  // walk cycle values
+  const legR  =  Math.sin(wp) * 0.22 * s;   // right leg swing (x-offset)
+  const legL  = -Math.sin(wp) * 0.22 * s;   // left leg swing
+  const armR  = -Math.sin(wp) * 0.14 * s;   // arms opposite legs
+  const armL  =  Math.sin(wp) * 0.14 * s;
+
+  ctx.save();
+  ctx.translate(cx, cy + bob);
+  ctx.rotate(lean);
+  ctx.scale(facing, 1);       // flip for left/right facing
+  ctx.lineCap  = 'round';
+  ctx.lineJoin = 'round';
+
+  // ── BACKPACK (on back = left side when facing right, drawn before torso) ──
+  const bpW = s*0.22, bpH = s*0.42;
+  const bpX = -s*0.145 - bpW + s*0.04;   // flush against left edge of torso
+  const bpY = -s*0.32;
+  // main body
+  ctx.fillStyle = C_SHADE; ctx.strokeStyle = C_DARK; ctx.lineWidth = lw;
+  rRect(bpX, bpY, bpW, bpH, s*0.045); ctx.fill(); ctx.stroke();
+  // top flap
+  ctx.fillStyle = C_DARK;
+  rRect(bpX + s*0.01, bpY - s*0.025, bpW - s*0.02, s*0.075, s*0.02);
+  ctx.fill();
+  // front pocket
+  ctx.fillStyle = C_DARK;
+  rRect(bpX + s*0.03, bpY + bpH*0.54, bpW - s*0.06, bpH*0.28, s*0.022);
+  ctx.fill(); ctx.strokeStyle = C_SHADE; ctx.lineWidth = lw*0.4; ctx.stroke();
+  // shoulder strap (diagonal from top of pack across to right shoulder)
+  ctx.strokeStyle = C_DETAIL; ctx.lineWidth = lw * 1.0;
+  ctx.beginPath();
+  ctx.moveTo(bpX + bpW * 0.7, bpY + s*0.04);
+  ctx.quadraticCurveTo(s*0.0, bpY + s*0.08, s*0.10, -s*0.28);
+  ctx.stroke();
+  // second strap (lower)
+  ctx.beginPath();
+  ctx.moveTo(bpX + bpW * 0.8, bpY + s*0.18);
+  ctx.quadraticCurveTo(s*0.02, bpY + s*0.22, s*0.08, -s*0.12);
+  ctx.stroke();
+
+  // ── LEGS ──
+  // Leg helper: hip → knee → foot, with a small foot stub
+  function leg(hx, swing) {
+    const kx = hx + swing * 0.55, ky = s*0.12;
+    const fx = hx + swing,        fy = s*0.46;
+    ctx.strokeStyle = C_DARK; ctx.lineWidth = lw * 1.45;
+    ctx.beginPath(); ctx.moveTo(hx, s*0.03); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
+    // knee dot
+    ctx.fillStyle = C_DARK;
+    ctx.beginPath(); ctx.arc(kx, ky, lw * 0.9, 0, Math.PI*2); ctx.fill();
+    // foot stub
+    ctx.strokeStyle = C_DARK; ctx.lineWidth = lw * 1.8;
+    ctx.beginPath(); ctx.moveTo(fx - s*0.01, fy); ctx.lineTo(fx + s*0.11, fy); ctx.stroke();
+  }
+  // right leg first (usually behind)
+  leg( s*0.07, legR);
+  leg(-s*0.07, legL);
+
+  // ── TORSO ──
+  ctx.fillStyle = C_FILL; ctx.strokeStyle = C_DARK; ctx.lineWidth = lw;
+  rRect(-s*0.145, -s*0.37, s*0.29, s*0.44, s*0.055); ctx.fill(); ctx.stroke();
+
+  // jacket / shirt seam lines (horizontal texture)
+  ctx.strokeStyle = C_DETAIL; ctx.lineWidth = lw * 0.45;
+  [-0.29, -0.18, -0.07].forEach(yf => {
+    ctx.beginPath();
+    ctx.moveTo(-s*0.10, s*yf); ctx.lineTo(s*0.10, s*yf);
+    ctx.stroke();
+  });
+  // center zip line
+  ctx.beginPath(); ctx.moveTo(0, -s*0.36); ctx.lineTo(0, s*0.04); ctx.stroke();
+
+  // ── ARMS ──
+  function arm(shX, swing) {
+    const ex = shX + swing * 0.7, ey = -s*0.10;
+    const hx = shX + swing,       hy =  s*0.10;
+    ctx.strokeStyle = C_DARK; ctx.lineWidth = lw * 1.25;
+    ctx.beginPath(); ctx.moveTo(shX, -s*0.28); ctx.lineTo(ex, ey); ctx.lineTo(hx, hy); ctx.stroke();
+    // hand
+    ctx.fillStyle = C_FILL; ctx.strokeStyle = C_DARK; ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.arc(hx, hy, lw * 1.5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  }
+  arm(-s*0.145, armL);   // left arm (free side)
+  arm( s*0.145, armR * 0.45);  // right arm (backpack side — less swing)
+
+  // ── NECK ──
+  ctx.fillStyle = C_FILL; ctx.strokeStyle = C_DARK; ctx.lineWidth = lw;
+  rRect(-s*0.055, -s*0.40, s*0.11, s*0.07, s*0.02); ctx.fill(); ctx.stroke();
+
+  // ── HEAD ──
+  ctx.fillStyle = C_FILL; ctx.strokeStyle = C_DARK; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.arc(0, -s*0.52, s*0.155, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+  // hair — a few rough strokes on top
+  ctx.strokeStyle = C_DARK; ctx.lineWidth = lw * 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-s*0.10, -s*0.62);
+  ctx.quadraticCurveTo(-s*0.02, -s*0.70, s*0.04, -s*0.66);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-s*0.05, -s*0.66);
+  ctx.quadraticCurveTo( s*0.04, -s*0.72, s*0.10, -s*0.65);
+  ctx.stroke();
+
+  // face — eye + nose
+  ctx.fillStyle = C_DARK;
+  ctx.beginPath(); ctx.arc(s*0.055, -s*0.525, s*0.026, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = C_DARK; ctx.lineWidth = lw * 0.6;
+  ctx.beginPath();
+  ctx.moveTo(s*0.085, -s*0.50); ctx.lineTo(s*0.100, -s*0.475);
+  ctx.stroke();
+
+  // ── ambient glow (behind everything, drawn separately below) ──
+  ctx.restore();
+
+  // glow ring (drawn in screen-space, no flip needed)
+  ctx.save();
+  ctx.translate(cx, cy + bob);
+  const glowR = P.w * 0.85;
+  const glowA = moving ? 0.14 : (0.055 + Math.sin(t*0.038)*0.025);
+  const grd = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
+  grd.addColorStop(0,   `rgba(235,230,210,${glowA})`);
+  grd.addColorStop(0.5, `rgba(200,190,160,${glowA*0.35})`);
+  grd.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = grd;
+  ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawPlayer() {
+  const cx   = P.x - cam.x;
+  const cy   = P.y - cam.y;
+  const breath = P.moving ? 0 : Math.sin(breathPhase) * 1.4;
+  const bob    = P.moving ? Math.sin(P.walk) * 2.6 : breath;
+  const lean   = P.moving ? P.vx * 0.04 : 0;
+
+  // floor shadow
+  ctx.save();
+  const sw = P.w * (0.30 + Math.abs(bob) * 0.005);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + P.h*0.50, sw, P.h*0.062, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,0,0,0.38)';
+  ctx.fill();
+  ctx.restore();
+
+  drawChar(cx, cy, bob, lean, P.facing, P.moving ? P.walk : 0, P.moving);
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: LORE TEXTS
+// ─────────────────────────────────────────────
+function drawLoreTexts() {
+  for (const le of loreEvents) {
+    if (le.alpha < 0.005) continue;
+    const sx = le.wx - cam.x, sy = le.wy - cam.y;
+    if (sx < -220 || sx > CW+220 || sy < -40 || sy > CH+40) continue;
+    ctx.save();
+    // subtle glow behind text
+    ctx.globalAlpha = le.alpha * 0.22;
+    const tg = ctx.createRadialGradient(sx, sy-22, 0, sx, sy-22, 55);
+    tg.addColorStop(0, 'rgba(165,175,170,1)');
+    tg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = tg;
+    ctx.fillRect(sx-55, sy-55, 110, 50);
+    // text
+    ctx.globalAlpha = le.alpha * 0.72;
+    ctx.font = `10px Menlo, 'Courier New', monospace`;
+    ctx.fillStyle = 'rgba(185,192,188,1)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(le.text, sx, sy - 20);
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: OFF-SCREEN BUBBLE INDICATORS
+// ─────────────────────────────────────────────
+function drawBubbleIndicators() {
+  const pad = 34;
+  bubbles.forEach(b => {
+    const sx = b.wx - cam.x, sy = b.wy - cam.y;
+    // skip if bubble is on screen (with generous margin)
+    if (sx > -b.r && sx < CW + b.r && sy > -b.r && sy < CH + b.r) return;
+
+    // direction from screen centre → bubble screen position
+    const dx = sx - CW/2, dy = sy - CH/2;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) return;
+    const nx = dx/len, ny = dy/len;
+
+    // ray-rectangle intersection: find t for screen boundary
+    let tMax = Infinity;
+    if (nx > 0) tMax = Math.min(tMax, (CW - pad - CW/2) / nx);
+    else if (nx < 0) tMax = Math.min(tMax, (pad  - CW/2) / nx);
+    if (ny > 0) tMax = Math.min(tMax, (CH - pad - CH/2) / ny);
+    else if (ny < 0) tMax = Math.min(tMax, (pad  - CH/2) / ny);
+    const ix = CW/2 + nx * tMax;
+    const iy = CH/2 + ny * tMax;
+
+    // world distance → opacity
+    const wdist = Math.hypot(P.x - b.wx, P.y - b.wy);
+    const op = Math.max(0.15, Math.min(0.68, 800 / wdist));
+
+    const angle = Math.atan2(ny, nx);
+
+    ctx.save();
+    ctx.translate(ix, iy);
+    ctx.globalAlpha = op;
+
+    // soft glow behind indicator
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 18);
+    glow.addColorStop(0, 'rgba(175,185,185,0.18)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI*2); ctx.fill();
+
+    // chevron arrow
+    ctx.rotate(angle);
+    ctx.strokeStyle = 'rgba(188,195,192,0.90)';
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-7, -5.5); ctx.lineTo(3, 0); ctx.lineTo(-7, 5.5);
+    ctx.stroke();
+
+    // numeral above arrow
+    ctx.rotate(-angle);
+    ctx.font = `9px Palatino, 'Palatino Linotype', Georgia, serif`;
+    ctx.fillStyle = 'rgba(188,195,192,0.88)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(b.num, 0, -13);
+
+    ctx.restore();
+  });
+}
+
+// ─────────────────────────────────────────────
+//  DRAW: MINIMAP
+// ─────────────────────────────────────────────
+function drawMinimap() {
+  const mw = 41, mh = Math.round(41 * WH / WW);
+  const mx = CW - mw - 16, my = CH - mh - 16;
+  const sx = mw / WW, sy2 = mh / WH;
+
+  ctx.save();
+  ctx.fillStyle   = 'rgba(0,0,0,0.48)';
+  ctx.strokeStyle = 'rgba(180,162,130,0.22)';
+  ctx.lineWidth   = 0.5;
+  ctx.fillRect(mx, my, mw, mh);
+  ctx.strokeRect(mx, my, mw, mh);
+
+  // viewport rect on minimap
+  ctx.strokeStyle = 'rgba(180,162,130,0.18)';
+  ctx.strokeRect(mx + cam.x*sx, my + cam.y*sy2, CW*sx, CH*sy2);
+
+  // bubbles
+  const mmPalC = ['175,158,140', '148,165,178', '145,168,140'];  // per-bubble minimap colour
+  bubbles.forEach(b => {
+    const bx = mx + b.wx * sx, by = my + b.wy * sy2;
+    const visited = visitedBubbles.has(b.id);
+    const mc = mmPalC[b.id - 1];
+    ctx.beginPath(); ctx.arc(bx, by, visited ? 3.5 : 2.2, 0, Math.PI*2);
+    ctx.fillStyle = visited ? `rgba(${mc},0.82)` : `rgba(${mc},0.35)`;
+    ctx.fill();
+    if (visited) {
+      ctx.strokeStyle = `rgba(${mc},0.55)`; ctx.lineWidth = 0.7;
+      ctx.stroke();
+    }
+    ctx.font = `6px 'Space Mono', monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = visited ? `rgba(${mc},0.75)` : `rgba(${mc},0.38)`;
+    ctx.fillText(b.num, bx, by - 7);
+  });
+
+  // research points — coloured dots, brighter when player is close
+  researchPts.forEach(pt => {
+    const rx = mx + pt.wx * sx, ry = my + pt.wy * sy2;
+    const dist = Math.hypot(pt.wx - P.x, pt.wy - P.y);
+    const near   = dist < 400;
+    const active = dist < 150;
+    const r = active ? 2.8 : near ? 2.0 : 1.4;
+    // soft halo when active
+    if (active) {
+      const halo = ctx.createRadialGradient(rx, ry, 0, rx, ry, r * 2.5);
+      halo.addColorStop(0, 'rgba(140,240,180,0.45)');
+      halo.addColorStop(1, 'rgba(140,240,180,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(rx, ry, r * 2.5, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.beginPath(); ctx.arc(rx, ry, r, 0, Math.PI*2);
+    ctx.fillStyle = active  ? 'rgba(160,255,190,0.95)'
+                  : near    ? 'rgba(130,210,160,0.70)'
+                  :           'rgba(90,150,120,0.45)';
+    ctx.fill();
+  });
+
+  // player dot
+  ctx.beginPath();
+  ctx.arc(mx + P.x*sx, my + P.y*sy2, 2.5, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(240,232,205,0.92)'; ctx.fill();
+
+  ctx.restore();
+}
+
+// ─────────────────────────────────────────────
+//  MAIN DRAW
+// ─────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, CW, CH);
+
+  // Apply screen shake
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // 1 — Stone texture, scrolled with camera
+  if (stonePat && stoneImg.naturalWidth > 0) {
+    const iw = stoneImg.naturalWidth, ih = stoneImg.naturalHeight;
+    const ox = -(cam.x % iw), oy = -(cam.y % ih);
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.fillStyle = stonePat;
+    ctx.fillRect(0, 0, CW + iw, CH + ih);
+    ctx.restore();
+    // very light darken — keep texture visible
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, 0, CW, CH);
+  } else {
+    ctx.fillStyle = '#0c0a08';
+    ctx.fillRect(0, 0, CW, CH);
+  }
+
+  // 1b — Mineral sparkle: faint luminous flecks in stone (world-space fixed)
+  if (stoneImg.naturalWidth > 0) {
+    for (let i = 0; i < 60; i++) {
+      const wx = sr(i*4+200) * WW, wy = sr(i*4+201) * WH;
+      const sx2 = wx - cam.x, sy2 = wy - cam.y;
+      if (sx2 < -4 || sx2 > CW+4 || sy2 < -4 || sy2 > CH+4) continue;
+      const flick = 0.35 + 0.65*Math.abs(Math.sin(t*0.022 + i*1.3));
+      const op = sr(i*4+202) * 0.09 * flick;
+      ctx.fillStyle = `rgba(220,210,180,${op})`;
+      ctx.beginPath(); ctx.arc(sx2, sy2, 0.8 + sr(i*4+203)*1.2, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // 2a — Zone atmosphere: soft colour pools around each bubble
+  bubbles.forEach(b => {
+    const sx = b.wx - cam.x, sy = b.wy - cam.y;
+    const r  = 420;
+    // skip if glow circle is entirely off-screen
+    if (sx + r < 0 || sx - r > CW || sy + r < 0 || sy - r > CH) return;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 0.020 + b.ph);
+    const cols = [
+      `rgba(90,65,30,`,    // bubble I  — warm amber
+      `rgba(28,48,80,`,    // bubble II — deep indigo
+      `rgba(38,68,42,`,    // bubble III— mossy green
+    ];
+    const a = (0.09 + pulse * 0.05);
+    const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+    g.addColorStop(0,   cols[b.id-1] + a + ')');
+    g.addColorStop(0.6, cols[b.id-1] + (a*0.35) + ')');
+    g.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, CW, CH);
+  });
+
+  // 2 — Rotating white noise layer
+  ctx.save();
+  ctx.translate(CW/2, CH/2);
+  ctx.rotate(noiseRot);
+  ctx.drawImage(noiseC, -NS/2, -NS/2);
+  ctx.restore();
+
+  // 3 — Player trail (faint glow behind movement)
+  drawPlayerTrail();
+
+  // 3b — Footprints (on ground, under world objects)
+  drawFootprints();
+
+  // 4 — World objects
+  drawWorldObjects();
+
+  // 4b — Lore texts (float above rune marks)
+  drawLoreTexts();
+
+  // 4c — Bubble bleed: interior texture bleeds into world on approach
+  drawBubbleBleed();
+
+  // 5 — Bubbles
+  bubbles.forEach(drawBubble);
+
+  // 6 — Player
+  drawPlayer();
+
+  // 7 — Atmospheric dust particles
+  drawParticles();
+
+  // 8 — Vignette
+
+  const vig = ctx.createRadialGradient(CW/2, CH/2, CH*0.25, CW/2, CH/2, CH*0.82);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.38)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, CW, CH);
+
+  // 9 — World-edge darkness (fog at world boundaries)
+  {
+    const ex = P.x / WW, ey = P.y / WH;
+    const exL = Math.max(0, (0.12 - ex)  / 0.12);
+    const exR = Math.max(0, (ex - 0.88)  / 0.12);
+    const eyT = Math.max(0, (0.12 - ey)  / 0.12);
+    const eyB = Math.max(0, (ey - 0.88)  / 0.12);
+    const aMax = Math.max(exL, exR, eyT, eyB);
+    if (aMax > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${aMax * 0.70})`;
+      ctx.fillRect(0, 0, CW, CH);
+    }
+  }
+
+  // 10 — Off-screen bubble direction indicators
+  if (bubbleZoom < 0.1) drawBubbleIndicators();
+
+  // 11 — Minimap (hide when inside bubble)
+  if (bubbleZoom < 0.5) drawMinimap();
+
+  // 12 — Entry flash
+  if (bubbleFlash > 0.005) {
+    ctx.fillStyle = `rgba(195,205,208,${bubbleFlash * 0.45})`;
+    ctx.fillRect(0, 0, CW, CH);
+  }
+
+  // 12b — Iris wipe: radial cut-in from bubble position
+  if (bubbleIrisR > 1 && bubbleZoom < 0.92) {
+    const eb = enteredBubble || lastEnteredBubble;
+    const iox = eb ? (eb.wx - cam.x) : CW/2;
+    const ioy = eb ? (eb.wy - cam.y) : CH/2;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.beginPath();
+    ctx.rect(0, 0, CW, CH);
+    ctx.arc(iox, ioy, bubbleIrisR, 0, Math.PI*2, true);  // cut-out circle
+    ctx.fill('evenodd');
+    ctx.restore();
+  }
+
+  // 13 — Bubble interior
+  if (bubbleZoom > 0.01) {
+    ctx.save();
+
+    const bId = (enteredBubble || lastEnteredBubble) ? (enteredBubble || lastEnteredBubble).id : 1;
+
+    if (bId === 2) {
+      // ── Bubble II: kalevala video as walkable floor ────────────────
+      //  Black base first (covers world during iris-wipe transition)
+      ctx.fillStyle = `rgba(0,0,0,${0.92 * bubbleZoom})`;
+      ctx.fillRect(0, 0, CW, CH);
+
+      if (elKalTex && elKalTex.readyState >= 2) {
+        // Video draws slightly oversized and parallaxes opposite to player movement
+        // so it feels like the character is walking across the video surface
+        const b2  = bubbles[1];
+        const sc  = 1.20;   // 20% oversized → 96px margin for parallax
+        const dw  = CW * sc, dh = CH * sc;
+        const ox  = -((P.x - b2.wx) * 0.055);   // pan opposite to motion
+        const oy  = -((P.y - b2.wy) * 0.055);
+        const cox = Math.max(-(dw-CW)/2, Math.min((dw-CW)/2, ox));
+        const coy = Math.max(-(dh-CH)/2, Math.min((dh-CH)/2, oy));
+        ctx.globalAlpha = bubbleZoom;
+        ctx.drawImage(elKalTex, -(dw-CW)/2 + cox, -(dh-CH)/2 + coy, dw, dh);
+        // tint layer: keep it moody
+        ctx.fillStyle = 'rgba(8,5,3,0.30)';
+        ctx.fillRect(0, 0, CW, CH);
+      }
+
+      // footprints on the video floor
+      ctx.globalAlpha = bubbleZoom;
+      drawFootprints();
+
+      // character walking on the video texture
+      ctx.globalAlpha = bubbleZoom;
+      drawPlayer();
+      ctx.globalAlpha = 1;
+
+      // vignette: dark edges, feel of an enclosed space
+      const vig2 = ctx.createRadialGradient(CW/2, CH/2, CH*0.12, CW/2, CH/2, CH*0.72);
+      vig2.addColorStop(0, 'rgba(0,0,0,0)');
+      vig2.addColorStop(1, `rgba(0,0,0,${bubbleZoom * 0.82})`);
+      ctx.fillStyle = vig2; ctx.fillRect(0, 0, CW, CH);
+
+    } else {
+      // ── Bubbles I and III: solid dark background ────────────────────
+      ctx.fillStyle = `rgba(0,0,0,${0.92 * bubbleZoom})`;
+      ctx.fillRect(0, 0, CW, CH);
+
+      if (bId === 1) {
+        // ── Bubble I: video overlay ────────────────────
+        if (elVid1 && elVid1.readyState >= 2) {
+          const vw = elVid1.videoWidth || 16, vh = elVid1.videoHeight || 9;
+          const aspect = vw / vh;
+          let dw = CW * 0.90, dh = dw / aspect;
+          if (dh > CH * 0.90) { dh = CH * 0.90; dw = dh * aspect; }
+          ctx.globalAlpha = bubbleZoom;
+          ctx.drawImage(elVid1, CW/2 - dw/2, CH/2 - dh/2, dw, dh);
+        }
+
+      } else if (bId === 3) {
+        // ── Bubble III: ritual chamber ─────────────────
+        ctx.save();
+        ctx.globalAlpha = bubbleZoom * 0.85;
+        const pulse3 = 0.5 + Math.sin(t*0.027)*0.5;
+        const fg = ctx.createRadialGradient(CW/2, CH*1.1, 0, CW/2, CH*1.1, CH*0.9);
+        fg.addColorStop(0,   `rgba(90,50,18,${pulse3*0.35})`);
+        fg.addColorStop(0.4, `rgba(50,28,10,${pulse3*0.18})`);
+        fg.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.fillStyle = fg; ctx.fillRect(0,0,CW,CH);
+        const runeRings = [
+          { r:200, n:24, rot: t*0.0006,  alpha:0.12 },
+          { r:140, n:16, rot:-t*0.0009,  alpha:0.18 },
+          { r: 80, n: 8, rot: t*0.0015,  alpha:0.28 },
+        ];
+        ctx.translate(CW/2, CH/2);
+        runeRings.forEach(ring => {
+          const runeSet = 'ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ';
+          for (let i = 0; i < ring.n; i++) {
+            const ang = (i/ring.n)*Math.PI*2 + ring.rot;
+            const rx = Math.cos(ang)*ring.r, ry = Math.sin(ang)*ring.r;
+            ctx.save();
+            ctx.translate(rx, ry); ctx.rotate(ang + Math.PI/2);
+            ctx.font = `300 ${8 + ring.r/40}px Palatino, 'Palatino Linotype', Georgia, serif`;
+            ctx.fillStyle = `rgba(165,182,160,${ring.alpha * (0.6+0.4*Math.sin(t*0.02+i))})`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(runeSet[i % runeSet.length], 0, 0);
+            ctx.restore();
+          }
+          ctx.beginPath(); ctx.arc(0,0,ring.r,0,Math.PI*2);
+          ctx.strokeStyle = `rgba(128,148,124,${ring.alpha*0.35})`;
+          ctx.lineWidth = 0.5; ctx.stroke();
+        });
+        ctx.font = `300 ${38 + pulse3*8}px Palatino, 'Palatino Linotype', Georgia, serif`;
+        ctx.fillStyle = `rgba(185,200,180,${0.50 + pulse3*0.22})`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('ᛟ', 0, 0);
+        ctx.restore();   // restore inner save (undoes translate + globalAlpha)
+      }
+    } // end else (non-II bubbles)
+
+    // ESC hint
+    ctx.globalAlpha = bubbleZoom * 0.35;
+    ctx.font = `10px Menlo, 'Courier New', monospace`;
+    ctx.fillStyle = 'rgba(175,182,180,1)';
+    ctx.textAlign = 'center';
+    ctx.fillText('[ esc / enter ]', CW/2, CH - 18);
+
+    ctx.restore();
+  }
+
+  // 14 — Culmination: all 3 bubbles visited
+  if (culminationAlpha > 0.01 && bubbleZoom < 0.1) {
+    ctx.save();
+    // soft cool wash — barely visible tint
+    ctx.fillStyle = `rgba(148,162,168,${culminationAlpha * 0.05})`;
+    ctx.fillRect(0, 0, CW, CH);
+
+    ctx.textAlign = 'center';
+
+    // line 1: fades in at t=80
+    const cfa1 = Math.min(1, (culminationTimer - 80)  / 120) * culminationAlpha;
+    if (cfa1 > 0) {
+      ctx.globalAlpha = cfa1 * 0.68;
+      ctx.font = `300 14px Palatino, 'Palatino Linotype', Georgia, serif`;
+      ctx.fillStyle = 'rgba(195,202,200,1)';
+      ctx.fillText('ᛟ · the circle is complete · ᛟ', CW/2, CH/2 - 24);
+    }
+    // line 2: fades in at t=220
+    const cfa2 = Math.min(1, (culminationTimer - 220) / 120) * culminationAlpha;
+    if (cfa2 > 0) {
+      ctx.globalAlpha = cfa2 * 0.46;
+      ctx.font = `10px Menlo, 'Courier New', monospace`;
+      ctx.fillStyle = 'rgba(172,180,178,1)';
+      ctx.fillText('all portals visited', CW/2, CH/2 - 4);
+    }
+    // line 3: fades in at t=370 — field recorder's note
+    const cfa3 = Math.min(1, (culminationTimer - 370) / 180) * culminationAlpha;
+    if (cfa3 > 0) {
+      ctx.globalAlpha = cfa3 * 0.30;
+      ctx.font = `9px Menlo, 'Courier New', monospace`;
+      ctx.fillStyle = 'rgba(155,162,160,1)';
+      ctx.fillText('the echo persists', CW/2, CH/2 + 16);
+    }
+
+    ctx.restore();
+  }
+
+  // end shake transform
+  ctx.restore();
+
+  // HUD — fixed to screen (no shake transform)
+  if (bubbleZoom < 0.5) {
+    ctx.save();
+    ctx.font = `10px Menlo, 'Courier New', monospace`;
+    ctx.fillStyle = 'rgba(158,165,162,0.20)';
+    ctx.textAlign = 'left';
+    ctx.fillText('C O S M O S', 18, CH - 16);
+    const fx = (P.x / WW).toFixed(3), fy = (P.y / WH).toFixed(3);
+    ctx.fillText(`${fx} · ${fy}`, 18, CH - 30);
+    ctx.textAlign = 'right';
+    ctx.fillText('W A S D  /  ← ↑ ↓ →', CW - 18, CH - 16);
+    let nearest = null, minD = Infinity;
+    for (const b of bubbles) {
+      const d = Math.hypot(P.x - b.wx, P.y - b.wy);
+      if (d < minD) { minD = d; nearest = b; }
+    }
+    if (nearest && minD < 900) {
+      const nearAlpha = Math.min(0.32, (900 - minD) / 900 * 0.32);
+      ctx.fillStyle = `rgba(175,182,178,${nearAlpha})`;
+      ctx.fillText(`${nearest.num}  ${Math.round(minD)}m`, CW - 18, CH - 30);
+    }
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  LOOP
+// ─────────────────────────────────────────────
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+genNoise();
+loop();
+</script>
+</body>
+</html>
