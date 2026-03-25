@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>COSMOS · Texture Tool</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0c0a; color: rgba(210,205,195,0.85);
+      font-family: Georgia, Palatino, 'Palatino Linotype', serif;
+      min-height: 100vh; display: flex; flex-direction: column;
+    }
+    header {
+      padding: 18px 28px 14px;
+      border-bottom: 1px solid rgba(200,195,185,0.12);
+      display: flex; align-items: baseline; gap: 18px;
+    }
+    header h1 {
+      font-size: 14px; font-weight: normal; font-style: italic;
+      letter-spacing: 0.35em; opacity: 0.70;
+    }
+    header span { font-size: 9px; opacity: 0.30; letter-spacing: 0.20em; font-style: normal; }
+
+    .workspace {
+      flex: 1; display: flex; gap: 0;
+    }
+
+    /* ── Left panel: controls ── */
+    .panel {
+      width: 260px; min-width: 260px;
+      padding: 20px 18px;
+      border-right: 1px solid rgba(200,195,185,0.10);
+      display: flex; flex-direction: column; gap: 22px;
+      overflow-y: auto;
+    }
+    .section-title {
+      font-size: 8px; letter-spacing: 0.28em; opacity: 0.40;
+      text-transform: uppercase; margin-bottom: 10px;
+    }
+    .row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+    label { font-size: 10px; opacity: 0.55; letter-spacing: 0.10em; }
+    input[type=range] {
+      width: 100%; accent-color: rgba(200,195,185,0.70);
+      background: transparent;
+    }
+    .val { font-size: 9px; opacity: 0.40; font-family: 'Courier New', monospace; }
+    select {
+      background: #1a1915; color: rgba(210,205,195,0.80);
+      border: 1px solid rgba(200,195,185,0.20); padding: 4px 8px;
+      font-family: Georgia, serif; font-size: 10px;
+      letter-spacing: 0.08em; width: 100%; cursor: pointer;
+    }
+    button {
+      background: rgba(200,195,185,0.08);
+      border: 1px solid rgba(200,195,185,0.22);
+      color: rgba(210,205,195,0.80);
+      padding: 8px 14px; cursor: pointer;
+      font-family: Georgia, serif; font-size: 9px;
+      letter-spacing: 0.20em; width: 100%;
+      transition: background 0.15s;
+    }
+    button:hover { background: rgba(200,195,185,0.15); }
+    button.primary {
+      border-color: rgba(200,195,185,0.45);
+      background: rgba(200,195,185,0.12);
+    }
+
+    /* Import drop zone */
+    .dropzone {
+      border: 1px dashed rgba(200,195,185,0.25);
+      padding: 18px 12px; text-align: center;
+      font-size: 9px; opacity: 0.45; cursor: pointer;
+      letter-spacing: 0.12em;
+      transition: border-color 0.2s, opacity 0.2s;
+    }
+    .dropzone.over {
+      border-color: rgba(200,195,185,0.70);
+      opacity: 0.80;
+    }
+    #fileInput { display: none; }
+
+    /* Resize controls (shown after import) */
+    #importControls { display: none; }
+
+    /* ── Right: preview area ── */
+    .preview-area {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 28px; gap: 16px;
+      position: relative;
+    }
+    .canvas-wrap {
+      position: relative;
+      box-shadow: 0 0 40px rgba(0,0,0,0.6);
+    }
+    canvas#preview {
+      display: block;
+      image-rendering: pixelated;
+    }
+    .tiled-wrap {
+      display: none;
+      flex-direction: column; gap: 8px; align-items: center;
+    }
+    .tiled-wrap.visible { display: flex; }
+    canvas#tiled {
+      display: block;
+      image-rendering: pixelated;
+      opacity: 0.80;
+    }
+    .preview-label {
+      font-size: 8px; opacity: 0.30; letter-spacing: 0.20em;
+      text-transform: uppercase;
+    }
+
+    /* Size presets */
+    .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+    .preset-btn {
+      padding: 4px 10px; font-size: 8px; letter-spacing: 0.12em;
+      width: auto; opacity: 0.70;
+    }
+    .preset-btn:hover { opacity: 1; }
+
+    /* Info bar */
+    .info-bar {
+      padding: 8px 28px;
+      border-top: 1px solid rgba(200,195,185,0.08);
+      font-size: 8px; opacity: 0.30; letter-spacing: 0.14em;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>COSMOS · Texture Tool</h1>
+  <span>GENERATE &nbsp;·&nbsp; IMPORT &amp; RESIZE &nbsp;·&nbsp; EXPORT</span>
+</header>
+
+<div class="workspace">
+  <!-- ── Controls ── -->
+  <div class="panel">
+
+    <!-- Mode -->
+    <div>
+      <div class="section-title">Mode</div>
+      <select id="mode">
+        <option value="generate">Generate procedural</option>
+        <option value="import">Import image</option>
+      </select>
+    </div>
+
+    <!-- ── Generator settings ── -->
+    <div id="genControls">
+      <div class="section-title">Generator</div>
+
+      <div class="row">
+        <label>Type</label>
+        <select id="genType">
+          <option value="gravel">Gravel / stone ground</option>
+          <option value="sand">Sand / dust</option>
+          <option value="moss">Moss / organic</option>
+          <option value="slate">Slate / dark stone</option>
+          <option value="noise">Noise field</option>
+          <option value="fabric">Woven fabric</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>Scale <span class="val" id="scaleVal">4</span></label>
+        <input type="range" id="scale" min="1" max="32" value="4" step="1">
+      </div>
+
+      <div class="row">
+        <label>Roughness <span class="val" id="roughVal">0.50</span></label>
+        <input type="range" id="rough" min="0" max="1" value="0.50" step="0.01">
+      </div>
+
+      <div class="row">
+        <label>Contrast <span class="val" id="contVal">0.60</span></label>
+        <input type="range" id="contrast" min="0" max="1" value="0.60" step="0.01">
+      </div>
+
+      <div class="row">
+        <label>Hue offset <span class="val" id="hueVal">0°</span></label>
+        <input type="range" id="hue" min="-180" max="180" value="0" step="1">
+      </div>
+
+      <div class="row">
+        <label>Seed <span class="val" id="seedVal">42</span></label>
+        <input type="range" id="seed" min="0" max="999" value="42" step="1">
+      </div>
+
+      <button id="randomise">Randomise</button>
+    </div>
+
+    <!-- ── Import settings ── -->
+    <div id="importControls">
+      <div class="section-title">Import</div>
+      <div class="dropzone" id="dropzone">
+        Drop image here<br>or click to browse
+      </div>
+      <input type="file" id="fileInput" accept="image/*">
+
+      <div id="resizeControls" style="display:none; margin-top:14px;">
+        <div class="section-title" style="margin-top:0;">Resize</div>
+        <div class="presets">
+          <button class="preset-btn" data-w="128" data-h="128">128</button>
+          <button class="preset-btn" data-w="256" data-h="256">256</button>
+          <button class="preset-btn" data-w="512" data-h="512">512</button>
+          <button class="preset-btn" data-w="1024" data-h="1024">1024</button>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <label>Width</label>
+          <input type="range" id="importW" min="32" max="1024" value="256" step="8">
+          <span class="val" id="importWVal">256 px</span>
+        </div>
+        <div class="row">
+          <label>Height</label>
+          <input type="range" id="importH" min="32" max="1024" value="256" step="8">
+          <span class="val" id="importHVal">256 px</span>
+        </div>
+        <div class="row">
+          <label>Brightness <span class="val" id="importBrightVal">1.00</span></label>
+          <input type="range" id="importBright" min="0.2" max="2.0" value="1.00" step="0.01">
+        </div>
+        <div class="row">
+          <label>Contrast <span class="val" id="importContVal">1.00</span></label>
+          <input type="range" id="importCont" min="0.2" max="2.0" value="1.00" step="0.01">
+        </div>
+        <div class="row">
+          <label>Desaturate <span class="val" id="importSatVal">0%</span></label>
+          <input type="range" id="importSat" min="0" max="1" value="0" step="0.01">
+        </div>
+        <button id="applyImport" style="margin-top:8px;">Apply adjustments</button>
+      </div>
+    </div>
+
+    <hr style="border:none; border-top:1px solid rgba(200,195,185,0.10);">
+
+    <!-- Output size -->
+    <div>
+      <div class="section-title">Output size</div>
+      <div class="presets" id="outputPresets">
+        <button class="preset-btn" data-w="128" data-h="128">128</button>
+        <button class="preset-btn" data-w="256" data-h="256">256</button>
+        <button class="preset-btn" data-w="512" data-h="512">512</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <label>W <span class="val" id="outWVal">256</span> × H <span class="val" id="outHVal">256</span></label>
+        <input type="range" id="outW" min="64" max="1024" value="256" step="8">
+        <input type="range" id="outH" min="64" max="1024" value="256" step="8">
+      </div>
+    </div>
+
+    <!-- Tile preview toggle -->
+    <div>
+      <div class="section-title">Tile preview</div>
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="showTile" style="accent-color:rgba(200,195,185,0.70);">
+        <span style="font-size:10px; opacity:0.55;">Show 3×3 tiled preview</span>
+      </label>
+    </div>
+
+    <!-- Export -->
+    <div>
+      <div class="section-title">Export</div>
+      <button class="primary" id="exportBtn">Export PNG</button>
+      <div class="val" id="exportPath" style="margin-top:6px; font-size:8px; opacity:0.35; word-break:break-all;"></div>
+    </div>
+
+  </div><!-- /panel -->
+
+  <!-- ── Preview ── -->
+  <div class="preview-area">
+    <div class="canvas-wrap">
+      <canvas id="preview" width="256" height="256"></canvas>
+    </div>
+    <div class="preview-label" id="previewLabel">256 × 256</div>
+
+    <div class="tiled-wrap" id="tiledWrap">
+      <div class="preview-label">3 × 3 tile</div>
+      <canvas id="tiled" width="512" height="512"></canvas>
+    </div>
+  </div>
+</div><!-- /workspace -->
+
+<div class="info-bar" id="infoBar">ready</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let mode       = 'generate';
+let outW       = 256, outH = 256;
+let importImg  = null;
+let importW    = 256, importH = 256;
+let genType    = 'gravel';
+let scale      = 4;
+let rough      = 0.50;
+let contrast   = 0.60;
+let hue        = 0;
+let seed       = 42;
+let isBright   = 1.0;
+let iCont      = 1.0;
+let iSat       = 0.0;
+let showTile   = false;
+
+// ─── Canvas ───────────────────────────────────────────────────────────────────
+const cv  = document.getElementById('preview');
+const ctx = cv.getContext('2d');
+const tileC = document.getElementById('tiled');
+const tileCtx = tileC.getContext('2d');
+
+// ─── Seeded PRNG ─────────────────────────────────────────────────────────────
+function sr(n, s) {
+  const x = Math.sin(n * 127.1 + s * 311.7 + 1.4142) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// ─── Noise (value noise, bilinear) ────────────────────────────────────────────
+function valueNoise(x, y, freq, s) {
+  const X = x * freq, Y = y * freq;
+  const xi = Math.floor(X), yi = Math.floor(Y);
+  const xf = X - xi, yf = Y - yi;
+  const v00 = sr(xi * 1000 + yi, s);
+  const v10 = sr((xi+1)*1000 + yi, s);
+  const v01 = sr(xi * 1000 + yi + 1, s);
+  const v11 = sr((xi+1)*1000 + yi + 1, s);
+  const ux = xf * xf * (3 - 2 * xf);
+  const uy = yf * yf * (3 - 2 * yf);
+  return v00*(1-ux)*(1-uy) + v10*ux*(1-uy) + v01*(1-ux)*uy + v11*ux*uy;
+}
+
+function fbm(x, y, octs, freq, lac, gain, s) {
+  let v = 0, amp = 1, f = freq, tot = 0;
+  for (let i = 0; i < octs; i++) {
+    v += valueNoise(x, y, f, s + i * 73.1) * amp;
+    tot += amp; amp *= gain; f *= lac;
+  }
+  return v / tot;
+}
+
+// ─── Generator ────────────────────────────────────────────────────────────────
+function generate() {
+  const W = outW, H = outH;
+  cv.width = W; cv.height = H;
+  const id = ctx.createImageData(W, H);
+  const d  = id.data;
+
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      let v = 0;
+      const s = seed;
+
+      if (genType === 'gravel') {
+        v = fbm(px/W, py/H, 6, scale * 0.8, 2.1, 0.5, s);
+        v = Math.pow(v, 1 - rough * 0.4);
+        // add voronoi-like cells
+        const cx2 = px * scale / W * 4, cy2 = py * scale / H * 4;
+        const ci = Math.floor(cx2), cj = Math.floor(cy2);
+        let minD = 1;
+        for (let di = -1; di <= 1; di++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            const sx = ci + di + 0.2 + sr((ci+di)*100+(cj+dj), s) * 0.6;
+            const sy = cj + dj + 0.2 + sr((ci+di)*100+(cj+dj)*3+7, s) * 0.6;
+            const dd = Math.hypot(cx2 - sx, cy2 - sy);
+            if (dd < minD) minD = dd;
+          }
+        }
+        v = v * 0.6 + (1 - minD) * 0.4;
+
+      } else if (genType === 'sand') {
+        v = fbm(px/W, py/H, 4, scale * 1.2, 2.0, 0.55, s);
+        // ripple
+        const r = Math.sin((px/W + fbm(px/W, py/H, 2, scale*0.5, 2, 0.5, s+100) * rough) * Math.PI * scale * 2) * 0.5 + 0.5;
+        v = v * 0.4 + r * 0.6;
+
+      } else if (genType === 'moss') {
+        v = fbm(px/W, py/H, 7, scale * 0.6, 2.2, 0.6, s);
+        const spots = fbm(px/W, py/H, 3, scale * 2.0, 1.8, 0.4, s + 200);
+        v = v * 0.5 + Math.pow(spots, 1.5) * 0.5;
+
+      } else if (genType === 'slate') {
+        v = fbm(px/W, py/H, 5, scale * 1.5, 2.0, 0.45, s);
+        // strata lines
+        const strata = Math.abs(Math.sin((py/H + fbm(px/W, py/H, 2, scale, 2, 0.5, s+50) * rough * 0.3) * Math.PI * scale * 1.5));
+        v = v * 0.3 + (1 - strata) * 0.7;
+
+      } else if (genType === 'noise') {
+        v = fbm(px/W, py/H, 8, scale, 2.0, 0.5, s);
+
+      } else if (genType === 'fabric') {
+        const wx = Math.abs(Math.sin(px/W * Math.PI * scale * 4));
+        const wy = Math.abs(Math.sin(py/H * Math.PI * scale * 4));
+        const cross = Math.min(wx, wy);
+        v = cross * 0.5 + fbm(px/W, py/H, 3, scale*2, 2.0, 0.5, s) * 0.5;
+      }
+
+      // Contrast
+      v = 0.5 + (v - 0.5) * (1 + contrast * 1.5);
+      v = Math.max(0, Math.min(1, v));
+
+      // Hue offset
+      const hueFrac = (hue + 180) / 360;
+      let r = v, g = v, b2 = v;
+      if (Math.abs(hue) > 5) {
+        // tint
+        const hi = hueFrac * 6;
+        const hi2 = hi % 1;
+        if (hi < 1)      { r = v; g = v * (0.55 + hi2 * 0.45); b2 = v * 0.55; }
+        else if (hi < 2) { r = v * (1 - hi2*0.3); g = v; b2 = v * 0.55; }
+        else if (hi < 3) { r = v * 0.70; g = v; b2 = v * (0.55 + hi2*0.45); }
+        else if (hi < 4) { r = v * 0.70; g = v * (1 - hi2*0.3); b2 = v; }
+        else if (hi < 5) { r = v * (0.55 + hi2*0.45); g = v * 0.65; b2 = v; }
+        else             { r = v; g = v * 0.65; b2 = v * (1 - hi2*0.35); }
+        r = Math.max(0, Math.min(1, r));
+        g = Math.max(0, Math.min(1, g));
+        b2 = Math.max(0, Math.min(1, b2));
+      }
+
+      const i4 = (py * W + px) * 4;
+      d[i4]   = r  * 255 | 0;
+      d[i4+1] = g  * 255 | 0;
+      d[i4+2] = b2 * 255 | 0;
+      d[i4+3] = 255;
+    }
+  }
+
+  ctx.putImageData(id, 0, 0);
+  updateTile();
+  updateInfo(`generated · ${W}×${H} · ${genType} · seed ${seed}`);
+}
+
+// ─── Import & adjust ──────────────────────────────────────────────────────────
+function applyImport() {
+  if (!importImg) return;
+  const W = importW, H = importH;
+  cv.width = W; cv.height = H;
+
+  // Draw scaled
+  const tmp = document.createElement('canvas');
+  tmp.width = W; tmp.height = H;
+  const tc  = tmp.getContext('2d');
+  tc.filter = `brightness(${isBright}) contrast(${iCont})`;
+  tc.drawImage(importImg, 0, 0, W, H);
+
+  if (iSat > 0) {
+    // Desaturate
+    const id = tc.getImageData(0, 0, W, H);
+    const d  = id.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const grey = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+      d[i]   = d[i]   + (grey - d[i])   * iSat;
+      d[i+1] = d[i+1] + (grey - d[i+1]) * iSat;
+      d[i+2] = d[i+2] + (grey - d[i+2]) * iSat;
+    }
+    tc.putImageData(id, 0, 0);
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(tmp, 0, 0);
+  updateTile();
+  updateInfo(`import · ${W}×${H}`);
+}
+
+// ─── Tile preview ─────────────────────────────────────────────────────────────
+function updateTile() {
+  if (!showTile) return;
+  const W = outW * 3, H = outH * 3;
+  tileC.width = W; tileC.height = H;
+  for (let ty = 0; ty < 3; ty++) {
+    for (let tx = 0; tx < 3; tx++) {
+      tileCtx.drawImage(cv, tx * outW, ty * outH);
+    }
+  }
+}
+
+// ─── Info bar ────────────────────────────────────────────────────────────────
+function updateInfo(msg) {
+  document.getElementById('infoBar').textContent = msg;
+  document.getElementById('previewLabel').textContent = `${outW} × ${outH}`;
+}
+
+// ─── Export PNG ──────────────────────────────────────────────────────────────
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = `cosmos_texture_${genType}_${outW}x${outH}_s${seed}.png`;
+  a.href = cv.toDataURL('image/png');
+  a.click();
+  document.getElementById('exportPath').textContent = `↓ ${a.download}`;
+});
+
+// ─── UI wiring ────────────────────────────────────────────────────────────────
+function numInput(id, valId, fmt, cb) {
+  const el  = document.getElementById(id);
+  const vEl = document.getElementById(valId);
+  el.addEventListener('input', () => {
+    vEl.textContent = fmt(parseFloat(el.value));
+    cb(parseFloat(el.value));
+    redraw();
+  });
+}
+
+function redraw() {
+  if (mode === 'generate') generate();
+  else if (importImg) applyImport();
+}
+
+numInput('scale',    'scaleVal',   v => Math.round(v),                    v => { scale    = v; });
+numInput('rough',    'roughVal',   v => v.toFixed(2),                     v => { rough    = v; });
+numInput('contrast', 'contVal',    v => v.toFixed(2),                     v => { contrast = v; });
+numInput('hue',      'hueVal',     v => `${Math.round(v)}°`,             v => { hue      = v; });
+numInput('seed',     'seedVal',    v => Math.round(v),                    v => { seed     = Math.round(v); });
+numInput('outW',     'outWVal',    v => Math.round(v),                    v => { outW = Math.round(v); cv.width = outW; });
+numInput('outH',     'outHVal',    v => Math.round(v),                    v => { outH = Math.round(v); cv.height = outH; });
+numInput('importW',  'importWVal', v => `${Math.round(v)} px`,            v => { importW = Math.round(v); });
+numInput('importH',  'importHVal', v => `${Math.round(v)} px`,            v => { importH = Math.round(v); });
+numInput('importBright', 'importBrightVal', v => v.toFixed(2),            v => { isBright = v; });
+numInput('importCont',   'importContVal',   v => v.toFixed(2),            v => { iCont   = v; });
+numInput('importSat',    'importSatVal',    v => `${Math.round(v*100)}%`, v => { iSat    = v; });
+
+document.getElementById('genType').addEventListener('change', e => {
+  genType = e.target.value; generate();
+});
+
+document.getElementById('mode').addEventListener('change', e => {
+  mode = e.target.value;
+  document.getElementById('genControls').style.display    = mode === 'generate' ? '' : 'none';
+  document.getElementById('importControls').style.display = mode === 'import'   ? '' : 'none';
+  if (mode === 'generate') generate();
+});
+
+document.getElementById('randomise').addEventListener('click', () => {
+  seed = Math.floor(Math.random() * 999);
+  document.getElementById('seed').value = seed;
+  document.getElementById('seedVal').textContent = seed;
+  generate();
+});
+
+document.getElementById('showTile').addEventListener('change', e => {
+  showTile = e.target.checked;
+  document.getElementById('tiledWrap').classList.toggle('visible', showTile);
+  if (showTile) updateTile();
+});
+
+document.getElementById('applyImport').addEventListener('click', applyImport);
+
+// Output size presets
+document.querySelectorAll('#outputPresets .preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const w = parseInt(btn.dataset.w), h = parseInt(btn.dataset.h);
+    outW = w; outH = h;
+    document.getElementById('outW').value = w;
+    document.getElementById('outH').value = h;
+    document.getElementById('outWVal').textContent = w;
+    document.getElementById('outHVal').textContent = h;
+    redraw();
+  });
+});
+
+// Import resize presets
+document.querySelectorAll('#resizeControls .preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const w = parseInt(btn.dataset.w), h = parseInt(btn.dataset.h);
+    importW = w; importH = h;
+    document.getElementById('importW').value = w;
+    document.getElementById('importH').value = h;
+    document.getElementById('importWVal').textContent = `${w} px`;
+    document.getElementById('importHVal').textContent = `${h} px`;
+    applyImport();
+  });
+});
+
+// ─── File drop / browse ───────────────────────────────────────────────────────
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+
+dropzone.addEventListener('click',   () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) loadFile(f);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      importImg = img;
+      importW = Math.min(1024, img.width);
+      importH = Math.min(1024, img.height);
+      document.getElementById('importW').value = importW;
+      document.getElementById('importH').value = importH;
+      document.getElementById('importWVal').textContent = `${importW} px`;
+      document.getElementById('importHVal').textContent = `${importH} px`;
+      document.getElementById('resizeControls').style.display = '';
+      outW = importW; outH = importH;
+      applyImport();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+generate();
+</script>
+</body>
+</html>
