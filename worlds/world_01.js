@@ -1052,18 +1052,15 @@ export class WorldOne extends WorldBase {
     ctx.closePath();
   }
 
-  // ─── Research point bonfires ──────────────────────────────────────────────
   _drawResearchBonfires(ctx, renderer, t) {
     const { cam, CW, CH } = renderer;
     const { P } = this;
     this._researchPts.forEach(pt => {
       const sx = pt.wx - cam.x, sy = pt.wy - cam.y;
       if (sx < -60 || sx > CW + 60 || sy < -60 || sy > CH + 60) return;
-      const dist   = Math.hypot(P.x - pt.wx, P.y - pt.wy);
-      const active = dist < 200;
-      const near   = dist < 400;
-      this._drawBonfire(ctx, sx, sy, active, t);
-      if (active) {
+      const dist = Math.hypot(P.x - pt.wx, P.y - pt.wy);
+      this._drawBonfire(ctx, sx, sy, dist < 200, t);
+      if (dist < 200) {
         ctx.save();
         ctx.globalAlpha = Math.max(0, 1 - dist / 200) * 0.55;
         ctx.font = `9px Menlo, 'Courier New', monospace`;
@@ -1078,78 +1075,61 @@ export class WorldOne extends WorldBase {
   _drawBonfire(ctx, sx, sy, active, t) {
     ctx.save();
     ctx.translate(sx, sy);
-
     const flicker = active ? 1 + Math.sin(t * 0.22) * 0.16 + Math.sin(t * 0.37) * 0.09 : 0.5;
+
+    // Ground shadow
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.beginPath();
+    ctx.ellipse(1, 7, 11, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
 
     // Ground glow when active
     if (active) {
       ctx.globalAlpha = 0.08 * flicker;
-      const g = ctx.createRadialGradient(0, 4, 0, 0, 4, 24);
+      const g = ctx.createRadialGradient(0, 4, 0, 0, 4, 22);
       g.addColorStop(0, 'rgba(240,220,160,1)');
       g.addColorStop(1, 'rgba(240,200,80,0)');
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.ellipse(0, 6, 24, 11, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 5, 22, 10, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Ground shadow
-    ctx.globalAlpha = 0.28;
-    ctx.fillStyle   = 'rgba(0,0,0,0.6)';
-    ctx.beginPath();
-    ctx.ellipse(1, 7, 12, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Three base stones — black fill, white stroke (B&W character style)
+    // Three stones — black fill, white stroke (same style as player)
     ctx.globalAlpha = 0.90;
-    ctx.lineWidth   = 1.1;
+    ctx.lineWidth = 1.1;
     for (let i = 0; i < 3; i++) {
-      const a  = (i / 3) * Math.PI * 2 - Math.PI / 2;
-      const bx = Math.cos(a) * 6;
-      const by = Math.sin(a) * 3.5 + 5;
+      const a = (i / 3) * Math.PI * 2 - Math.PI / 2;
+      const bx = Math.cos(a) * 6, by = Math.sin(a) * 3.5 + 5;
       ctx.fillStyle   = 'rgba(14,12,8,0.95)';
       ctx.strokeStyle = 'rgba(175,170,158,0.80)';
       ctx.beginPath();
       ctx.ellipse(bx, by, 5, 3.5, a * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      ctx.fill(); ctx.stroke();
     }
 
-    // Crossed logs — white highlight on black body
-    const logCol   = 'rgba(14,12,8,0.95)';
-    const logLight = 'rgba(170,165,152,0.70)';
+    // Crossed logs
     ctx.lineCap = 'round';
     [Math.PI / 5, -Math.PI / 5].forEach(angle => {
-      ctx.save();
-      ctx.rotate(angle);
-      // thick dark body
-      ctx.strokeStyle = logCol;
-      ctx.lineWidth   = 3.5;
-      ctx.beginPath();
-      ctx.moveTo(-9, 5); ctx.lineTo(9, -3);
-      ctx.stroke();
-      // thin light edge
-      ctx.strokeStyle = logLight;
-      ctx.lineWidth   = 1.2;
-      ctx.stroke();
-      ctx.restore();
+      ctx.save(); ctx.rotate(angle);
+      ctx.strokeStyle = 'rgba(14,12,8,0.95)'; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(-9, 5); ctx.lineTo(9, -3); ctx.stroke();
+      ctx.strokeStyle = 'rgba(170,165,152,0.70)'; ctx.lineWidth = 1.2;
+      ctx.stroke(); ctx.restore();
     });
 
-    // Flame
+    // Flame — black outer, white inner
     const fh = (active ? 10 : 5) * flicker;
-    ctx.globalAlpha = active ? 0.88 : 0.35;
-
-    // Outer black flame shape
+    ctx.globalAlpha = active ? 0.88 : 0.32;
     ctx.fillStyle = 'rgba(8,6,4,0.92)';
     ctx.beginPath();
     ctx.moveTo(0, 1);
     ctx.bezierCurveTo(-5, -fh * 0.45, -4, -fh * 0.88, 0, -fh - 1);
     ctx.bezierCurveTo(4, -fh * 0.88, 5, -fh * 0.45, 0, 1);
     ctx.fill();
-
-    // White inner flame
-    ctx.globalAlpha = active ? 0.80 * flicker : 0.28;
-    ctx.fillStyle   = 'rgba(235,228,205,1)';
+    ctx.globalAlpha = active ? 0.80 * flicker : 0.25;
+    ctx.fillStyle = 'rgba(235,228,205,1)';
     ctx.beginPath();
     ctx.moveTo(0, 1);
     ctx.bezierCurveTo(-2.5, -fh * 0.35, -2, -fh * 0.72, 0, -fh * 0.92);
