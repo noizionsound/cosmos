@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>COSMOS · OGG Converter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0908; color: rgba(220,218,210,0.85);
+      font-family: 'Courier New', Courier, monospace;
+      min-height: 100vh; display: flex; flex-direction: column;
+    }
+    header {
+      padding: 18px 24px 14px;
+      border-bottom: 1px solid rgba(220,218,210,0.12);
+      display: flex; align-items: baseline; gap: 16px;
+    }
+    header h1 { font-size: 11px; font-weight: bold; letter-spacing: 0.30em; }
+    header span { font-size: 9px; opacity: 0.35; letter-spacing: 0.18em; }
+
+    .main { flex: 1; display: flex; gap: 0; }
+
+    /* Drop zone */
+    .drop-area {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px; gap: 14px;
+      border-right: 1px solid rgba(220,218,210,0.08);
+      cursor: pointer; transition: background 0.15s;
+    }
+    .drop-area.over, .drop-area:hover { background: rgba(220,218,210,0.04); }
+    .drop-icon { font-size: 28px; opacity: 0.30; }
+    .drop-label {
+      font-size: 10px; letter-spacing: 0.22em;
+      opacity: 0.55; text-align: center; line-height: 1.8;
+    }
+    .drop-formats {
+      font-size: 8px; opacity: 0.30; letter-spacing: 0.14em;
+    }
+    #fileInputConv { display: none; }
+
+    /* Settings panel */
+    .settings {
+      width: 220px; padding: 20px 16px;
+      border-right: 1px solid rgba(220,218,210,0.08);
+      display: flex; flex-direction: column; gap: 18px;
+    }
+    .sec-label {
+      font-size: 8px; letter-spacing: 0.28em; opacity: 0.38;
+      margin-bottom: 8px; text-transform: uppercase;
+    }
+    .row { display: flex; flex-direction: column; gap: 5px; }
+    label { font-size: 9px; opacity: 0.55; }
+    select, input[type=range] {
+      width: 100%; background: rgba(220,218,210,0.06);
+      border: 1px solid rgba(220,218,210,0.18);
+      color: rgba(220,218,210,0.85);
+      padding: 5px 8px; font-family: inherit; font-size: 9px;
+      letter-spacing: 0.08em;
+    }
+    input[type=range] {
+      padding: 0; border: none; background: transparent;
+      accent-color: rgba(220,218,210,0.70);
+    }
+    .val { font-size: 8px; opacity: 0.40; font-family: inherit; }
+
+    /* File list */
+    .file-list {
+      flex: 1.5; padding: 16px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .file-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid rgba(220,218,210,0.12);
+      background: rgba(220,218,210,0.03);
+      font-size: 9px; letter-spacing: 0.06em;
+    }
+    .file-name { flex: 1; opacity: 0.80; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-size { opacity: 0.35; min-width: 48px; text-align: right; }
+    .file-status {
+      min-width: 80px; text-align: right; font-size: 8px;
+      letter-spacing: 0.10em;
+    }
+    .file-status.pending  { opacity: 0.40; }
+    .file-status.working  { color: rgba(255,220,100,0.90); }
+    .file-status.done     { color: rgba(140,220,160,0.90); }
+    .file-status.error    { color: rgba(240,100,100,0.90); }
+    .file-dl {
+      font-size: 8px; cursor: pointer; opacity: 0.55;
+      border: 1px solid rgba(220,218,210,0.20);
+      padding: 2px 7px; letter-spacing: 0.10em;
+      background: transparent; color: inherit; font-family: inherit;
+    }
+    .file-dl:hover { opacity: 1; background: rgba(220,218,210,0.08); }
+
+    /* Actions bar */
+    .actions {
+      padding: 12px 16px;
+      border-top: 1px solid rgba(220,218,210,0.08);
+      display: flex; gap: 10px; align-items: center;
+    }
+    button.action {
+      background: rgba(220,218,210,0.08);
+      border: 1px solid rgba(220,218,210,0.25);
+      color: rgba(220,218,210,0.85);
+      padding: 8px 18px; cursor: pointer;
+      font-family: inherit; font-size: 9px;
+      letter-spacing: 0.20em; font-weight: bold;
+      transition: background 0.12s;
+    }
+    button.action:hover { background: rgba(220,218,210,0.16); }
+    button.action:disabled { opacity: 0.28; cursor: not-allowed; }
+    button.primary { border-color: rgba(220,218,210,0.50); }
+
+    .status-bar {
+      font-size: 8px; opacity: 0.35; letter-spacing: 0.12em;
+      padding: 10px 16px;
+      border-top: 1px solid rgba(220,218,210,0.06);
+      font-family: inherit;
+    }
+
+    .empty-hint {
+      text-align: center; opacity: 0.22;
+      font-size: 9px; letter-spacing: 0.15em;
+      padding-top: 40px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>COSMOS · OGG CONVERTER</h1>
+  <span>DRAG FILES → CONVERT → DOWNLOAD</span>
+</header>
+
+<div class="main">
+  <!-- Drop zone -->
+  <div class="drop-area" id="dropArea">
+    <div class="drop-icon">⬇</div>
+    <div class="drop-label">DROP AUDIO FILES HERE<br>or click to browse</div>
+    <div class="drop-formats">MP3 · WAV · AIFF · FLAC · M4A · AAC → OGG</div>
+    <input type="file" id="fileInputConv" accept="audio/*" multiple>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings">
+    <div>
+      <div class="sec-label">Output</div>
+      <div class="row">
+        <label>Bitrate</label>
+        <select id="bitrate">
+          <option value="64000">64 kbps</option>
+          <option value="96000">96 kbps</option>
+          <option value="128000" selected>128 kbps</option>
+          <option value="192000">192 kbps</option>
+          <option value="256000">256 kbps</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <label>Sample rate</label>
+        <select id="sampleRate">
+          <option value="22050">22050 Hz</option>
+          <option value="44100" selected>44100 Hz</option>
+          <option value="48000">48000 Hz</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <label>Channels</label>
+        <select id="channels">
+          <option value="1">Mono</option>
+          <option value="2" selected>Stereo</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">Normalize</div>
+      <div class="row">
+        <label>Peak level <span class="val" id="peakVal">–0.1 dB</span></label>
+        <input type="range" id="peakLevel" min="-12" max="0" value="-0.1" step="0.1">
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;">
+          <input type="checkbox" id="doNorm" checked style="accent-color:rgba(220,218,210,0.70);">
+          <span>Auto-normalize</span>
+        </label>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">Filename</div>
+      <div class="row">
+        <label>Suffix</label>
+        <select id="suffix">
+          <option value="">none</option>
+          <option value="_loop">_loop</option>
+          <option value="_approach">_approach</option>
+          <option value="_inside">_inside</option>
+          <option value="_ambient">_ambient</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- File list -->
+  <div class="file-list" id="fileList">
+    <div class="empty-hint" id="emptyHint">no files yet</div>
+  </div>
+</div>
+
+<div class="actions">
+  <button class="action primary" id="convertAll" disabled>CONVERT ALL</button>
+  <button class="action" id="downloadAll" disabled>DOWNLOAD ALL</button>
+  <button class="action" id="clearBtn">CLEAR</button>
+</div>
+
+<div class="status-bar" id="statusBar">ready · uses Web Audio API · works offline</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+const files = [];   // { file, name, size, status, blob, url }
+
+// ─── UI refs ─────────────────────────────────────────────────────────────────
+const dropArea    = document.getElementById('dropArea');
+const fileInput   = document.getElementById('fileInputConv');
+const fileList    = document.getElementById('fileList');
+const emptyHint   = document.getElementById('emptyHint');
+const convertBtn  = document.getElementById('convertAll');
+const downloadBtn = document.getElementById('downloadAll');
+const clearBtn    = document.getElementById('clearBtn');
+const statusBar   = document.getElementById('statusBar');
+const peakLevel   = document.getElementById('peakLevel');
+const peakVal     = document.getElementById('peakVal');
+
+peakLevel.addEventListener('input', () => {
+  peakVal.textContent = `${parseFloat(peakLevel.value).toFixed(1)} dB`;
+});
+
+// ─── Drag & drop ─────────────────────────────────────────────────────────────
+dropArea.addEventListener('click', () => fileInput.click());
+dropArea.addEventListener('dragover',  e => { e.preventDefault(); dropArea.classList.add('over'); });
+dropArea.addEventListener('dragleave', () => dropArea.classList.remove('over'));
+dropArea.addEventListener('drop', e => {
+  e.preventDefault(); dropArea.classList.remove('over');
+  addFiles([...e.dataTransfer.files].filter(f => f.type.startsWith('audio/')));
+});
+fileInput.addEventListener('change', e => addFiles([...e.target.files]));
+
+// ─── Add files ───────────────────────────────────────────────────────────────
+function addFiles(newFiles) {
+  newFiles.forEach(f => {
+    files.push({ file: f, name: f.name, size: f.size, status: 'pending', blob: null, url: null });
+  });
+  renderList();
+  convertBtn.disabled  = false;
+  statusBar.textContent = `${files.length} file(s) loaded`;
+}
+
+function renderList() {
+  emptyHint.style.display = files.length ? 'none' : '';
+  // Remove old rows
+  fileList.querySelectorAll('.file-item').forEach(el => el.remove());
+
+  files.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'file-item';
+    row.id = `row-${i}`;
+
+    const nameEl   = document.createElement('div');
+    nameEl.className = 'file-name';
+    nameEl.textContent = f.name;
+
+    const sizeEl = document.createElement('div');
+    sizeEl.className = 'file-size';
+    sizeEl.textContent = fmtSize(f.size);
+
+    const statusEl = document.createElement('div');
+    statusEl.className = `file-status ${f.status}`;
+    statusEl.id = `status-${i}`;
+    statusEl.textContent = f.status.toUpperCase();
+
+    row.appendChild(nameEl);
+    row.appendChild(sizeEl);
+    row.appendChild(statusEl);
+
+    if (f.status === 'done' && f.url) {
+      const dl = document.createElement('button');
+      dl.className = 'file-dl';
+      dl.textContent = 'DL';
+      dl.onclick = () => downloadFile(f);
+      row.appendChild(dl);
+    }
+
+    fileList.appendChild(row);
+  });
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+// ─── Conversion ──────────────────────────────────────────────────────────────
+convertBtn.addEventListener('click', async () => {
+  convertBtn.disabled = true;
+  let done = 0;
+  for (let i = 0; i < files.length; i++) {
+    if (files[i].status === 'done') { done++; continue; }
+    setStatus(i, 'working', 'CONVERTING...');
+    try {
+      await convertToOgg(i);
+      done++;
+    } catch(e) {
+      setStatus(i, 'error', 'ERROR');
+      console.error(e);
+    }
+  }
+  statusBar.textContent = `${done}/${files.length} converted`;
+  downloadBtn.disabled = files.every(f => f.status !== 'done');
+  convertBtn.disabled  = false;
+});
+
+async function convertToOgg(idx) {
+  const f = files[idx];
+  const sr    = parseInt(document.getElementById('sampleRate').value);
+  const ch    = parseInt(document.getElementById('channels').value);
+  const norm  = document.getElementById('doNorm').checked;
+  const peak  = parseFloat(peakLevel.value);
+
+  // Decode audio
+  const arrayBuf = await f.file.arrayBuffer();
+  const AC = new AudioContext({ sampleRate: sr });
+  const decoded = await AC.decodeAudioData(arrayBuf);
+
+  // Resample / downmix
+  const offCtx = new OfflineAudioContext(ch, decoded.duration * sr, sr);
+  const src = offCtx.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offCtx.destination);
+  src.start(0);
+  const rendered = await offCtx.startRendering();
+
+  // Normalize
+  let buf = rendered;
+  if (norm) {
+    buf = normalizeBuffer(rendered, ch, peak);
+  }
+
+  // Encode to OGG via MediaRecorder (Opus/Vorbis)
+  const blob = await encodeOgg(buf, sr, ch);
+  const suffix = document.getElementById('suffix').value;
+  const base   = f.name.replace(/\.[^.]+$/, '');
+  const outName = base + suffix + '.ogg';
+
+  files[idx].blob    = blob;
+  files[idx].url     = URL.createObjectURL(blob);
+  files[idx].outName = outName;
+  files[idx].size    = blob.size;
+  setStatus(idx, 'done', 'DONE');
+  AC.close();
+}
+
+function normalizeBuffer(buf, ch, peakDB) {
+  const targetLinear = Math.pow(10, peakDB / 20);
+  let maxAbs = 0;
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < d.length; i++) {
+      if (Math.abs(d[i]) > maxAbs) maxAbs = Math.abs(d[i]);
+    }
+  }
+  if (maxAbs < 0.0001) return buf;
+  const gain = targetLinear / maxAbs;
+  const AC2  = new AudioContext({ sampleRate: buf.sampleRate });
+  const out  = AC2.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const src = buf.getChannelData(c);
+    const dst = out.getChannelData(c);
+    for (let i = 0; i < src.length; i++) dst[i] = src[i] * gain;
+  }
+  AC2.close();
+  return out;
+}
+
+function encodeOgg(audioBuf, sr, ch) {
+  return new Promise((resolve, reject) => {
+    // Create a stream from the buffer and record via MediaRecorder
+    const ctx    = new AudioContext({ sampleRate: sr });
+    const dest   = ctx.createMediaStreamDestination();
+    const src    = ctx.createBufferSource();
+    src.buffer   = audioBuf;
+    src.connect(dest);
+
+    // Pick best OGG mime
+    const mime = MediaRecorder.isTypeSupported('audio/ogg; codecs=opus')
+      ? 'audio/ogg; codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/ogg')
+        ? 'audio/ogg'
+        : MediaRecorder.isTypeSupported('audio/webm; codecs=opus')
+          ? 'audio/webm; codecs=opus'
+          : 'audio/webm';
+
+    const br  = parseInt(document.getElementById('bitrate').value);
+    const rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: br });
+    const chunks = [];
+
+    rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    rec.onstop = () => {
+      ctx.close();
+      // If we got webm and wanted ogg, rename but keep as-is (still Opus)
+      const finalMime = mime.includes('ogg') ? 'audio/ogg' : 'audio/ogg';
+      resolve(new Blob(chunks, { type: finalMime }));
+    };
+    rec.onerror = e => { ctx.close(); reject(e); };
+
+    rec.start(100);
+    src.start(0);
+    src.onended = () => {
+      setTimeout(() => rec.stop(), 150);
+    };
+  });
+}
+
+function setStatus(i, cls, text) {
+  files[i].status = cls;
+  const el = document.getElementById(`status-${i}`);
+  if (el) { el.className = `file-status ${cls}`; el.textContent = text; }
+  // Re-render only that row to add DL button if done
+  if (cls === 'done') renderList();
+}
+
+// ─── Download ─────────────────────────────────────────────────────────────────
+function downloadFile(f) {
+  const a = document.createElement('a');
+  a.href     = f.url;
+  a.download = f.outName;
+  a.click();
+}
+
+downloadBtn.addEventListener('click', () => {
+  files.filter(f => f.status === 'done').forEach((f, i) => {
+    setTimeout(() => downloadFile(f), i * 300);
+  });
+});
+
+clearBtn.addEventListener('click', () => {
+  files.splice(0);
+  fileList.querySelectorAll('.file-item').forEach(el => el.remove());
+  emptyHint.style.display = '';
+  convertBtn.disabled  = true;
+  downloadBtn.disabled = true;
+  statusBar.textContent = 'cleared';
+});
+
+// ─── Note about browser support ───────────────────────────────────────────────
+window.addEventListener('load', () => {
+  if (!window.MediaRecorder) {
+    statusBar.textContent = 'WARNING: MediaRecorder not supported in this browser — use Chrome or Firefox';
+  } else {
+    const hasOgg = MediaRecorder.isTypeSupported('audio/ogg; codecs=opus');
+    const note   = hasOgg ? 'OGG/Opus supported' : 'OGG/Opus not available — will use WebM/Opus (rename to .ogg manually)';
+    statusBar.textContent = `ready · ${note}`;
+  }
+});
+</script>
+</body>
+</html>

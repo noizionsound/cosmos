@@ -1,0 +1,9 @@
+{
+  "name": "cosmos",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve . -l 8080 --no-clipboard",
+    "deploy": "bash deploy.sh"
+  }
+}
