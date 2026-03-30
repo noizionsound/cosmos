@@ -6,6 +6,28 @@
 
 import { WorldBase } from './WorldBase.js';
 
+// ─── Auto-discovery: read fires manifest synchronously ───────────────────────
+//  fetch() is async — by the time config is read (synchronous loadWorld call),
+//  the promise hasn't resolved yet and only the fallback file would be used.
+//  XHR with async=false reads the file before any code accesses _firesFiles.
+const _FIRES_FALLBACK = ['./sources/audio/fires/fire_1_lullaby.opus'];
+const _firesFiles = (() => {
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', './sources/audio/fires/manifest.json', false); // sync
+    xhr.send(null);
+    if (xhr.status === 200) {
+      const data = JSON.parse(xhr.responseText);
+      if (Array.isArray(data) && data.length) {
+        console.log(`[COSMOS] fires manifest — ${data.length} file(s)`);
+        return data;
+      }
+    }
+  } catch (e) { /* manifest missing or malformed */ }
+  console.log('[COSMOS] fires manifest not found — using fallback');
+  return _FIRES_FALLBACK;
+})();
+
 // ─── Lore texts (shown near rune marks) ──────────────────────────────────────
 const LORE_TEXTS = [
   'the stone remembers',
@@ -59,49 +81,74 @@ export class WorldOne extends WorldBase {
     return {
       width:         4200,
       height:        3000,
-      ambient:       './sources/audio/first_level_loop_1.ogg',
+      ambient:       './sources/audio/ambient/first_level_loop_1.ogg',
       groundTexture: './sources/photo/stone_texture.jpg',
 
       bubbles: [
-        { id: 1, wx: 300,  wy: 300,  r: 62, num: 'I',   ph: 0.0,
-          approach:      './sources/audio/bouble_1_loop_1.ogg',
+        { id: 1, name: 'echo_of_desert',   wx: 300,  wy: 300,  r: 72, num: 'I',   ph: 0.0,
+          // desert_pre: dry direct approach sound — no spatial processing
+          approach:      './sources/audio/bubbles/desert_pre.opus',
           inside:        './sources/video/desert.mp4',
           insideType:    'video',
           interiorVideo: './sources/video/desert.mp4',
-          interiorMode:  'fullscreen' },
-        { id: 2, wx: 3900, wy: 300,  r: 62, num: 'II',  ph: 2.09,
-          approach:      './sources/video/kalevala_texture.mp4',
-          inside:        './sources/audio/kalevala_21_03_26.ogg',
+          interiorMode:  'fullscreen',
+          // ghost: plays quietly after first visit — loop at low level
+          ghost:         './sources/audio/bubbles/ghost_desert_1.opus' },
+        { id: 2, name: 'echo_of_kalevala', wx: 3900, wy: 300,  r: 72, num: 'II',  ph: 2.09,
+          // kalevala_pre: direct approach — no room reverb (same as desert)
+          approach:      './sources/audio/bubbles/kalevala_pre.opus',
+          inside:        './sources/audio/bubbles/kalevala_bouble_2.opus',
           insideType:    'audio',
           interiorVideo: './sources/video/kalevala_texture.mp4',
-          interiorMode:  'floor' },
-        { id: 3, wx: 2100, wy: 2700, r: 62, num: 'III', ph: 4.19,
-          // No audio defined yet — add when ready:
-          // approach:  './sources/audio/bubble3_approach.ogg',
-          // inside:    './sources/audio/bubble3_inside.ogg',
-          // insideType: 'audio',
-        },
+          interiorMode:  'floor',
+          // ghost: lingers after first visit
+          ghost:         './sources/audio/bubbles/kalevala_ghost_2.opus' },
+        { id: 3, name: 'digital_echo', wx: 2100, wy: 2700, r: 72, num: 'III', ph: 4.19,
+          approach:      './sources/audio/bubbles/delay_pre.opus',
+          inside:        './sources/audio/bubbles/delay_in.opus',
+          insideType:    'audio',
+          interiorMode:  'genesis',
+          ghost:         './sources/audio/bubbles/delay_ghost_stereo.opus' },
       ],
 
-      research: [
-        './sources/audio/research/okant_CYL_0456.ogg',
-        './sources/audio/research/chants_bathhurst.mp3',
-        './sources/audio/research/korobori.ogg',
-        './sources/audio/research/bjornsang_CYL_0390.ogg',
-        './sources/audio/research/familjefadern_CYL_0327.ogg',
-      ],
-      nResearchPts: 14,
+      research: _firesFiles,
+      nResearchPts: 28,
     };
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
   onLoad(engine) {
     super.onLoad(engine);       // creates _bubbleSpatials, _researchPts (elements only)
+    // Randomise bonfire positions every load — avoids memorisation of the map
+    const cfg     = this.config;
+    const bubbles = cfg.bubbles;
+    // Player starts at world center — keep fires away from there too
+    const startX = cfg.width  / 2;
+    const startY = cfg.height / 2;
+    const placed = [];   // track already-placed fire positions for min-distance check
+    this._researchPts.forEach(pt => {
+      let wx, wy, tries = 0;
+      do {
+        wx = 350 + Math.random() * (cfg.width  - 700);
+        wy = 350 + Math.random() * (cfg.height - 700);
+        tries++;
+      } while (tries < 40 && (
+        bubbles.some(b  => Math.hypot(wx - b.wx,  wy - b.wy)  < 500) ||
+        Math.hypot(wx - startX, wy - startY) < 700 ||
+        placed.some(p   => Math.hypot(wx - p.wx,  wy - p.wy)  < 380)
+      ));
+      pt.wx = wx;
+      pt.wy = wy;
+      placed.push({ wx, wy });
+    });
     this._initState(engine);
   }
 
   onStart(engine) {
     super.onStart(engine);      // boots audio, creates spatial sources, starts ambient
+    this._initAcousticEcho(engine.audio);
+    // Delay fires created AFTER intro dismissed — avoids audio bleed during intro
+    // (see _introActive dismiss handler in update())
   }
 
   // ─── Game state init ───────────────────────────────────────────────────────
@@ -112,7 +159,7 @@ export class WorldOne extends WorldBase {
     // ── Player ──
     this.P = {
       x: R.WW / 2, y: R.WH / 2,
-      w: 46, h: 60, speed: 1.5,
+      w: 46, h: 60, speed: 1.5 * (R.CW / 960),
       vx: 0, vy: 0, walk: 0,
       moving: false, facing: 1,
     };
@@ -168,10 +215,38 @@ export class WorldOne extends WorldBase {
     this._bubbleFlash       = 0;
     this._bubbleIrisR       = 0;
 
+    // ── Ghost audio: reverbed fragment that lingers after exiting bubble ──
+    this._ghost       = null;   // { el, gainNode, AC, endTime, fading }
+    this._wasInBubble = false;
+
+    // ── Persistent ghosts: quiet loop per bubble, starts after first visit ──
+    this._persistentGhosts = {};  // bubbleId → { el, gainNode, AC, running }
+
+    // ── Delay-world bonfires: special fires inside bubble III with granular delay ──
+    // Positions in world-space near bubble III (wx=2100, wy=2700)
+    const _dSeed = (n) => { const x = Math.sin(n * 431.3 + 17.7) * 9301.2; return x - Math.floor(x); };
+    this._delayFirePts = Array.from({ length: 8 }, (_, i) => {
+      const angle = (i / 8) * Math.PI * 2 + _dSeed(i) * 0.8;
+      const dist  = 180 + _dSeed(i + 10) * 380;
+      return {
+        wx:      2100 + Math.cos(angle) * dist,
+        wy:      2700 + Math.sin(angle) * dist,
+        el:      null,   // audio element — set up in _initDelayFires
+        src:     null,   // DirectSource
+        chain:   null,   // granular delay chain nodes
+        _phase:  _dSeed(i + 20) * Math.PI * 2,  // unique phase for visual flicker
+      };
+    });
+
     // ── Visited + culmination ──
     this._visitedBubbles  = new Set();
     this._culminationAlpha = 0;
     this._culminationTimer = -1;
+
+    // ── Intro screen ──
+    this._introActive = true;
+    this._exitMode    = false;
+
 
     // ── Player trail & footprints ──
     this._playerTrail = [];
@@ -188,6 +263,10 @@ export class WorldOne extends WorldBase {
     // ── Idle breath ──
     this._breathPhase = 0;
 
+    // ── Pause menu ──
+    this._paused    = false;
+    this._pauseSel  = 0;
+
     // ── Ground texture ──
     this._stoneImg    = new Image();
     this._stonePat    = null;
@@ -196,14 +275,89 @@ export class WorldOne extends WorldBase {
     this._stoneImg.onerror = () => {
       const alt = new Image();
       alt.src = cfg.groundTexture.replace('.jpg', '.png');
-      alt.onload = () => { this._stoneImg = alt; this._stonePat = null; };
+      alt.onload = () => {
+        this._stoneImg = alt;
+        this._stonePat = null;
+        _fillAcousticMap(alt);
+      };
     };
+
+    // ── Acoustic map — sample stone texture into 64×64 brightness grid ──
+    // Dark pixels → stone cavity → more echo; bright pixels → open surface → less echo.
+    // The grid tiles over world space with a 512px period (matches texture repeat).
+    this._acousticData   = null;   // Uint8ClampedArray from getImageData
+    this._acousticFactor = 0;      // smoothed 0..1 — current zone echo depth
+    this._acousticEcho   = null;   // { send, out, AC } — created in onStart
+
+    const _fillAcousticMap = (img) => {
+      try {
+        const c  = document.createElement('canvas');
+        c.width  = 64; c.height = 64;
+        const cx = c.getContext('2d');
+        cx.drawImage(img, 0, 0, 64, 64);
+        this._acousticData = cx.getImageData(0, 0, 64, 64).data;
+        console.log('[AcousticMap] texture sampled →', this._acousticData.length / 4, 'px');
+      } catch (e) {
+        console.warn('[AcousticMap] sample failed:', e.message);
+      }
+    };
+    if (this._stoneImg.complete && this._stoneImg.naturalWidth > 0) {
+      _fillAcousticMap(this._stoneImg);
+    } else {
+      this._stoneImg.addEventListener('load', () => _fillAcousticMap(this._stoneImg), { once: true });
+    }
+
+    // ── Resonance network — bonfires "wake up" as more are visited ──
+    // Each visited research point adds to a global resonance wet that scales
+    // the acoustic map echo, making the world sound progressively more alive.
+    this._visitedBonfires = new Set();   // Set of visited research pt indices
+    this._resonanceWet    = 0;           // 0..1 accumulated resonance level
+
+    // ── Listener orientation — smooth player heading for binaural rotation ──
+    // Lerped from P.vx/P.vy so the "head turn" is gradual, not instant.
+    // Default facing: south (0,1) — arbitrary, gives clear starting panning.
+    this._orientVx = 0;
+    this._orientVy = 1;
   }
 
   // ─── UPDATE ────────────────────────────────────────────────────────────────
   update(t, input, renderer, audio) {
     const { P, bubbles } = this;
     const { CW, CH, WW, WH } = renderer;
+
+    // ── Intro / exit screen ──
+    if (this._introActive) {
+      // Kill ALL audio bleed: fires + bubble approach/inside + delay fires
+      if (this._researchPts) {
+        for (const pt of this._researchPts) {
+          if (!pt.src) continue;
+          try {
+            if (pt.src.setDryWet) pt.src.setDryWet(0, 0);
+            else if (pt.src.el)   pt.src.el.volume = 0;
+          } catch(_) {}
+        }
+      }
+      if (this._bubbleSpatials) {
+        for (const entry of Object.values(this._bubbleSpatials)) {
+          try {
+            if (entry.approachSrc?.setVolume) entry.approachSrc.setVolume(0);
+            if (entry.insideSrc?.setVolume)   entry.insideSrc.setVolume(0);
+          } catch(_) {}
+        }
+      }
+      // Delay fires are created after intro dismiss — no muting needed here
+      if (input.anyJustPressed()) {
+        if (this._exitMode) {
+          // Full reload — game restarts from scratch
+          window.location.reload();
+        } else {
+          this._introActive = false;
+          // Now safe to init delay fires — no intro bleed risk
+          this._initDelayFires(audio);
+        }
+      }
+      return;
+    }
 
     // ── Movement ──
     const { vx: mx, vy: my } = input.movement();
@@ -232,7 +386,17 @@ export class WorldOne extends WorldBase {
     // ── Bubble Enter / Exit ──
     if (input.justPressed('Enter')) {
       if (this._enteredBubble) {
+        const eb = this._enteredBubble;
+        P.x = eb.wx + eb.r + P.w * 2;
+        P.y = eb.wy;
+        P.vx = 0; P.vy = 0;
         this._enteredBubble = null;
+        // DO NOT reset _bubbleZoom to 0 — let it lerp naturally so outside sounds
+        // fade back in smoothly (≈1 s) instead of snapping to full volume instantly.
+        this._bubbleIrisR = 0;
+        renderer.cam.x = Math.max(0, Math.min(WW - CW, P.x - CW / 2));
+        renderer.cam.y = Math.max(0, Math.min(WH - CH, P.y - CH / 2));
+        // Show project description on the side
       } else {
         for (const b of bubbles) {
           if (Math.hypot(P.x - b.wx, P.y - b.wy) < b.r + P.w * 0.8) {
@@ -246,7 +410,9 @@ export class WorldOne extends WorldBase {
             this._lastEnteredBubble = b;
             this._bubbleFlash       = 1.0;
             renderer.shakeMag       = 7;
+            const firstVisit = !this._visitedBubbles.has(b.id);
             this._visitedBubbles.add(b.id);
+            if (firstVisit && b.ghost) this._startPersistentGhost(b, audio);
             if (this._visitedBubbles.size === 3 && this._culminationTimer < 0)
               this._culminationTimer = 0;
             break;
@@ -254,7 +420,47 @@ export class WorldOne extends WorldBase {
         }
       }
     }
-    if (input.justPressed('Escape')) this._enteredBubble = null;
+    if (input.justPressed('Escape')) {
+      if (this._enteredBubble) {
+        const eb = this._enteredBubble;
+        P.x = eb.wx + eb.r + P.w * 2;
+        P.y = eb.wy;
+        P.vx = 0; P.vy = 0;
+        this._enteredBubble = null;
+        // DO NOT reset _bubbleZoom — same as Enter exit path, let audio fade naturally
+        this._bubbleIrisR = 0;
+        renderer.cam.x = Math.max(0, Math.min(WW - CW, P.x - CW / 2));
+        renderer.cam.y = Math.max(0, Math.min(WH - CH, P.y - CH / 2));
+      } else {
+        this._paused = !this._paused;
+        this._pauseSel = 0;
+      }
+    }
+
+    // ── Pause menu navigation ──
+    if (this._paused) {
+      if (input.justPressed('ArrowUp')   || input.justPressed('KeyW')) this._pauseSel = Math.max(0, this._pauseSel - 1);
+      if (input.justPressed('ArrowDown') || input.justPressed('KeyS')) this._pauseSel = Math.min(1, this._pauseSel + 1);
+      if (input.justPressed('Enter')) {
+        if (this._pauseSel === 0) {
+          this._paused = false;
+        } else {
+          // EXIT — kill all audio, show intro screen, any key → full reload
+          this._killAllAudio(audio);
+          this._paused      = false;
+          this._exitMode    = true;
+          this._introActive = true;
+        }
+      }
+      return; // freeze world while paused
+    }
+
+    // ── Detect bubble exit → start ghost ──
+    const _nowIn = !!this._enteredBubble;
+    if (this._wasInBubble && !_nowIn && this._lastEnteredBubble) {
+      this._startGhost(audio);
+    }
+    this._wasInBubble = _nowIn;
 
     // ── Audio ──
     this._updateAudio(audio);
@@ -332,6 +538,7 @@ export class WorldOne extends WorldBase {
       this._culminationAlpha = Math.min(1, this._culminationAlpha + 0.004);
     }
 
+
     // ── Idle breath ──
     this._breathPhase += P.moving ? 0 : 0.018;
 
@@ -354,28 +561,80 @@ export class WorldOne extends WorldBase {
   _updateAudio(audio) {
     const { P } = this;
     const bZ    = this._bubbleZoom;
+
+    // ── Persistent ghost mute/unmute ──────────────────────────────────────────
+    this._updatePersistentGhosts(audio);
+
+    // ── Ambient stereo rotation ───────────────────────────────────────────────
+    // Very slow tracking so the pan feels like a gradual world-shift, not a head snap.
+    // Lerp 0.015 ≈ ~1s to reach new direction; decay 0.995 ≈ ~4s to settle back to centre.
+    const mvSpeed = Math.hypot(P.vx, P.vy);
+    if (mvSpeed > 0.04) {
+      this._orientVx += (P.vx - this._orientVx) * 0.015;
+      this._orientVy += (P.vy - this._orientVy) * 0.015;
+    } else {
+      this._orientVx *= 0.995;
+      this._orientVy *= 0.995;
+    }
+    if (this._acousticEcho?.stereoPan) {
+      // maxPan=0.6 → gentle swing; pan lerp 0.03 ≈ ~500ms tail — slow, atmospheric
+      const targetPan = audio.calcAmbientPan(this._orientVx, this._orientVy, 0.6);
+      const sp = this._acousticEcho.stereoPan;
+      sp.pan.value += (targetPan - sp.pan.value) * 0.03;
+    }
+
+    // ── Ghost: kill on re-entry, clean up when expired ──
+    if (this._ghost) {
+      const ghost = this._ghost;
+      if (this._enteredBubble && !ghost.fading) {
+        ghost.fading = true;
+        if (ghost.gainNode) {
+          const gAC = ghost.AC;
+          ghost.gainNode.gain.cancelScheduledValues(gAC.currentTime);
+          ghost.gainNode.gain.setValueAtTime(ghost.gainNode.gain.value, gAC.currentTime);
+          ghost.gainNode.gain.linearRampToValueAtTime(0, gAC.currentTime + 0.3);
+        } else {
+          // fallback path — no Web Audio gain node, fade via el.volume
+          ghost.el.volume = 0;
+        }
+        setTimeout(() => {
+          try { ghost.el.pause(); ghost.el.src = ''; } catch(_) {}
+          if (this._ghost === ghost) this._ghost = null;
+        }, 500);
+      } else if (!ghost.fading && ghost.AC.currentTime >= ghost.endTime) {
+        try { ghost.el.pause(); ghost.el.src = ''; } catch(_) {}
+        this._ghost = null;
+      }
+    }
     const actB  = this._enteredBubble || this._lastEnteredBubble;
     const actId = actB ? actB.id : 0;
 
+    // setVolume handles Resonance (_resGain), HRTF (gain), and fallback (el.volume)
     const sv = (src, vol) => {
       if (!src) return;
-      if (src.gain) src.gain.gain.value = Math.max(0, Math.min(1, vol));
-      else if (src.el) src.el.volume = Math.max(0, Math.min(1, vol * 0.9));
+      src.setVolume(Math.max(0, Math.min(1, vol)));
     };
+
+    // ── Volume multipliers from mixer sliders ──
+    const _v = window._COSMOS_VOL || {};
+    const fVol = _v.fires   ?? 0.85;   // fires (bonfires) multiplier
+    const bVol = _v.bubbles ?? 0.85;   // bubbles multiplier
 
     // ── Bubble 1 approach ──
     const b1  = this.bubbles[0];
     const b1e = this._bubbleSpatials[1];
     if (b1e && b1e.approachSrc) {
       const d  = Math.hypot(b1.wx - P.x, b1.wy - P.y);
-      const f  = Math.max(0, 1 - d / 1400);
+      const f  = Math.max(0, 1 - d / 900);
       audio.updatePosition(b1e.approachSrc, b1.wx - P.x, b1.wy - P.y);
-      sv(b1e.approachSrc, Math.min(1, f*f*0.92) * (1 - bZ));
+      // 9.0 multiplier: signal enters Resonance at max gain from ~600px out.
+      // Resonance applies its own distance rolloff (~×0.22 at 4.5m) on top.
+      sv(b1e.approachSrc, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
     }
     // ── Bubble 1 inside ──
     if (b1e && b1e.insideSrc) {
       audio.updatePosition(b1e.insideSrc, b1.wx - P.x, b1.wy - P.y);
-      sv(b1e.insideSrc, actId === 1 ? bZ * 0.92 : 0);
+      sv(b1e.insideSrc, actId === 1 ? bZ * 0.92 * bVol : 0);
     }
 
     // ── Bubble 2 approach ──
@@ -383,31 +642,479 @@ export class WorldOne extends WorldBase {
     const b2e = this._bubbleSpatials[2];
     if (b2e && b2e.approachSrc) {
       const d  = Math.hypot(b2.wx - P.x, b2.wy - P.y);
-      const f  = Math.max(0, 1 - d / 1400);
+      const f  = Math.max(0, 1 - d / 900);
       audio.updatePosition(b2e.approachSrc, b2.wx - P.x, b2.wy - P.y);
-      sv(b2e.approachSrc, Math.min(1, f*f*0.92) * (1 - bZ));
+      sv(b2e.approachSrc, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
     }
     // ── Bubble 2 inside ──
     if (b2e && b2e.insideSrc) {
       audio.updatePosition(b2e.insideSrc, b2.wx - P.x, b2.wy - P.y);
-      sv(b2e.insideSrc, actId === 2 ? bZ * 0.92 : 0);
+      sv(b2e.insideSrc, actId === 2 ? bZ * 0.92 * bVol : 0);
     }
 
-    // ── Research points ──
+    // ── Bubble 3 approach ──
+    const b3  = this.bubbles[2];
+    const b3e = this._bubbleSpatials[3];
+    if (b3e && b3e.approachSrc) {
+      const d  = Math.hypot(b3.wx - P.x, b3.wy - P.y);
+      const f  = Math.max(0, 1 - d / 900);
+      audio.updatePosition(b3e.approachSrc, b3.wx - P.x, b3.wy - P.y);
+      sv(b3e.approachSrc, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
+    }
+    // ── Bubble 3 inside ──
+    if (b3e && b3e.insideSrc) {
+      audio.updatePosition(b3e.insideSrc, b3.wx - P.x, b3.wy - P.y);
+      sv(b3e.insideSrc, actId === 3 ? bZ * 0.92 * bVol : 0);
+    }
+
+    // ── Research points — spatial audio + Doppler ──
     this._researchPts.forEach(pt => {
+      const dx   = pt.wx - P.x, dy = pt.wy - P.y;
+      const d    = Math.hypot(dx, dy);
+
+      // ── Doppler: light pitch shift based on radial velocity ──────────────────
+      // virtualSoS = 70 px/frame → ±4% at max speed ≈ ±0.5 semitone — subtle
+      if (d > 1) {
+        const approach = (P.vx * dx + P.vy * dy) / d;
+        const target   = Math.max(0.75, Math.min(1.33, 1.0 + approach / 70));
+        pt._doppler    = pt._doppler !== undefined
+          ? pt._doppler + (target - pt._doppler) * 0.06
+          : 1.0;
+        pt.el.playbackRate = pt._doppler;
+      }
+
       if (!pt.src) return;
-      const dx = pt.wx - P.x, dy = pt.wy - P.y;
-      const d  = Math.hypot(dx, dy);
-      const f  = Math.max(0, 1 - d / 400);
+      const f = Math.max(0, 1 - d / 400);
       audio.updatePosition(pt.src, dx, dy);
-      sv(pt.src, f * f * 0.80 * (1 - bZ));
+
+      // ── Wet / dry blend: direct signal when close, reverb when far ───────────
+      // closeness = 1 at d=0, 0 at d=250 → dry dominant near bonfire
+      // wetness   = inverse              → Resonance room dominant at distance
+      // 5.0 multiplier: 2× boost for audibility vs earlier captureStream design
+      const baseVol   = Math.min(1, f * f * 5.0) * (1 - bZ) * fVol;
+      const closeness = Math.max(0, 1 - d / 250);
+      if (pt.src.setDryWet) {
+        pt.src.setDryWet(baseVol * closeness, baseVol * (1 - closeness));
+      } else {
+        sv(pt.src, baseVol);
+      }
+
+      // Distance-based air absorption (wet filter): bright close, muffled far
+      // cutoff = 3500 / (1 + d/120) → 3500Hz at d=0, ~640Hz at d=400
+      if (pt.src.filter) {
+        pt.src.filter.frequency.value = Math.max(280, 3500 / (1 + d / 120));
+      }
     });
 
-    // ── Ambient duck when inside bubble ──
-    if (this._ambEl) {
-      const target = this._enteredBubble ? 0.18 : 0.72;
-      this._ambEl.volume += (target - this._ambEl.volume) * 0.04;
+    // ── Delay-world bonfires — only active when inside bubble III ──
+    const inDelay = this._enteredBubble?.id === 3;
+    if (this._delayFirePts) {
+      for (const pt of this._delayFirePts) {
+        if (!pt.el || !pt.inputGain) continue;
+        const dx = pt.wx - P.x, dy = pt.wy - P.y;
+        const d  = Math.hypot(dx, dy);
+        const f  = Math.max(0, 1 - d / 520);
+        const target = inDelay ? Math.min(1, f * f * 5.0) * bVol : 0;
+        // Smooth gain transitions
+        pt.inputGain.gain.value += (target - pt.inputGain.gain.value) * 0.04;
+        if (pt.chain) pt.chain.gain.value = pt.inputGain.gain.value > 0.001 ? 1 : 0;
+      }
     }
+
+    // ── Ambient duck when inside bubble ──
+    // If acoustic echo chain is active (mainGain exists), control via Web Audio gain.
+    // Otherwise control via el.volume directly (acoustic echo fallback).
+    if (this._ambEl) {
+      const wVol   = _v.world ?? 0.55;
+      // Inside bubble → full silence; outside → 0.36 (half of previous 0.72)
+      const target = this._enteredBubble ? 0 : 0.36 * wVol;
+      if (this._acousticEcho?.mainGain) {
+        const g = this._acousticEcho.mainGain;
+        g.gain.value += (target - g.gain.value) * 0.04;
+      } else {
+        this._ambEl.volume += (target - this._ambEl.volume) * 0.04;
+      }
+    }
+
+  }
+
+  // ─── Acoustic map: texture-based cavity echo on the ambient track ─────────
+  //
+  //  Graph:  ambEl → captureStream → src → send → delay → lp → fb ─┐
+  //                                                                  ↓
+  //                                           delay ← fb ← (loop back)
+  //                                             ↓
+  //                                            out → masterG
+  //
+  //  send.gain and out.gain are driven every frame by _acousticFactor,
+  //  which is smoothed from _getAcousticFactor(px, py).
+  //  The whole chain fades to 0 inside bubbles (dry interior stays dry).
+
+  // ─── Granular delay chain — used on delay-world bonfires ──────────────────
+  // Simulates grain scatter using N parallel LFO-modulated delay taps with
+  // feedback. No ScriptProcessor needed — pure Web Audio graph.
+  //
+  //  input → [for each tap]:
+  //            delay(t_i + LFO) → feedback → delay (loop)
+  //            delay → tapGain → panner → output
+  //
+  _createGranularDelayChain(AC, masterG, inputNode, seed) {
+    const s = (n) => { const x = Math.sin((seed + n) * 431.3 + 17.7) * 9301.2; return x - Math.floor(x); };
+    const NUM = 7;
+    const out = AC.createGain();
+    out.gain.value = 1;
+    out.connect(masterG);
+
+    // Waveform types for LFOs — variety per tap
+    const lfoShapes = ['sine', 'triangle', 'sawtooth', 'square', 'sine', 'triangle', 'sawtooth'];
+
+    for (let i = 0; i < NUM; i++) {
+      // Wide range of delay times: 25ms → 1.1s (creates very different echoes)
+      const baseDelay = 0.025 + s(i) * 1.05;
+
+      const delay = AC.createDelay(2.5);
+      delay.delayTime.value = baseDelay;
+
+      // Varied feedback: some short tight loops, some long washy repeats
+      const fb = AC.createGain();
+      fb.gain.value = 0.22 + s(i + 20) * 0.52;   // 22–74%
+
+      // Per-tap tone shaping — some bright, some muffled
+      const toneFilter = AC.createBiquadFilter();
+      toneFilter.type = (s(i + 60) > 0.6) ? 'highpass' : 'lowpass';
+      toneFilter.frequency.value = 180 + s(i + 61) * 3800;  // 180Hz–4kHz
+      toneFilter.Q.value = 0.3 + s(i + 62) * 1.8;
+
+      const tapG = AC.createGain();
+      tapG.gain.value = 0;
+
+      const pan = AC.createStereoPanner();
+      // Non-uniform panning — some extreme, some centre
+      pan.pan.value = (s(i + 70) * 2 - 1) * (0.4 + s(i + 71) * 0.6);
+
+      // Time LFO — grain scatter (very different rates per tap)
+      const lfo = AC.createOscillator();
+      lfo.type = lfoShapes[i];
+      lfo.frequency.value = 0.05 + s(i + 30) * 6.0;   // 0.05–6 Hz — very varied
+      const lfoA = AC.createGain();
+      lfoA.gain.value = 0.004 + s(i + 40) * 0.065;    // ±4–69ms time scatter
+      lfo.connect(lfoA);
+      lfoA.connect(delay.delayTime);
+      lfo.start(0);
+
+      // Amplitude tremolo — some slow breath, some fast chatter
+      const trem = AC.createOscillator();
+      trem.type = lfoShapes[(i + 2) % 7];
+      trem.frequency.value = 0.4 + s(i + 50) * 18;    // 0.4–18.4 Hz
+      const tremA = AC.createGain();
+      tremA.gain.value = 0.08 + s(i + 51) * 0.30;     // 8–38% tremolo depth
+      trem.connect(tremA);
+      tremA.connect(tapG.gain);
+      trem.start(0);
+
+      inputNode.connect(delay);
+      delay.connect(toneFilter);
+      toneFilter.connect(fb);
+      fb.connect(delay);            // feedback loop
+      toneFilter.connect(tapG);
+      tapG.connect(pan);
+      pan.connect(out);
+    }
+
+    return out;
+  }
+
+  // ─── Init delay-world bonfires (bubble III special fires) ─────────────────
+  _initDelayFires(audio) {
+    if (!audio.AC || !audio.masterG) return;
+    const AC      = audio.AC;
+    const masterG = audio.masterG;
+    const BOOST   = audio.BOOST;
+    const files   = _firesFiles;
+
+    this._delayFirePts.forEach((pt, i) => {
+      const el  = new Audio();
+      el.src    = files[i % files.length];
+      el.loop   = true;
+      el.play().catch(() => {});
+
+      try {
+        const src       = AC.createMediaElementSource(el);
+        const inputGain = AC.createGain();
+        inputGain.gain.value = 0;  // silent until inside bubble III
+        src.connect(inputGain);
+        const chain = this._createGranularDelayChain(AC, masterG, inputGain, i * 137);
+        chain.gain.value = 0;
+        pt.el        = el;
+        pt.chain     = chain;
+        pt.inputGain = inputGain;
+        console.log(`[DelayFire ${i}] ready`);
+      } catch(e) {
+        console.warn(`[DelayFire ${i}] error:`, e.message);
+        pt.el = el;
+      }
+    });
+  }
+
+  _initAcousticEcho(audio) {
+    if (!audio.AC || !this._ambEl) return;
+    const AC = audio.AC;
+    try {
+      // createMediaElementSource is stable and doesn't lose the stream on tab blur.
+      // captureStream was replaced because its MediaStream can lose audio tracks
+      // when the browser deprioritizes the tab, causing ambient cut-outs.
+      const mediaSrc  = AC.createMediaElementSource(this._ambEl);
+      const wvol      = window._COSMOS_VOL?.world ?? 0.55;
+      const mainGain  = AC.createGain();       mainGain.gain.value  = wvol * 0.36;
+      const stereoPan = AC.createStereoPanner(); stereoPan.pan.value = 0;
+
+      mediaSrc.connect(mainGain);
+      mainGain.connect(stereoPan);
+      stereoPan.connect(audio.masterG);
+
+      // Stop setAmbient's rAF loop — mainGain replaces el.volume control from here on.
+      // el.volume stays at 1.0 (no captureStream BOOST trick needed).
+      this._ambEl._ambTick = false;
+
+      this._acousticEcho = { mainGain, stereoPan, AC };
+      console.log('[AcousticEcho] ready — createMediaElementSource + stereoPan');
+    } catch(e) {
+      console.warn('[AcousticEcho] init failed, el.volume fallback active:', e.message);
+      // setAmbient's rAF loop continues controlling el.volume as fallback
+    }
+  }
+
+  // Returns 0..1 echo depth for world position (wx, wy).
+  // Samples the stone texture brightness at tiled world coordinates.
+  // Dark texels → deeper cavity → higher factor.
+  _getAcousticFactor(wx, wy) {
+    if (!this._acousticData) return 0.12;  // neutral default if texture not yet loaded
+    const tile = 512;   // world-px period matching CSS texture repeat
+    const tx   = ((wx % tile) + tile) % tile;
+    const ty   = ((wy % tile) + tile) % tile;
+    const px   = Math.min(63, Math.floor(tx / tile * 64));
+    const py   = Math.min(63, Math.floor(ty / tile * 64));
+    const idx  = (py * 64 + px) * 4;
+    const brightness = (this._acousticData[idx] + this._acousticData[idx+1] + this._acousticData[idx+2]) / 765;
+    // Map: dark (0) → 0.72, bright (1) → 0.05
+    return 0.05 + (1 - brightness) * 0.67;
+  }
+
+  // ─── Kill all audio instantly (called on EXIT) ────────────────────────────
+  // querySelectorAll misses new Audio() elements (not in DOM).
+  // We must stop _mediaEls (WorldBase list) + dynamic ghost elements manually.
+  _killAllAudio(audio) {
+    // 1. All managed media elements (ambient, bubble approach/inside, fires, videos)
+    if (this._mediaEls) {
+      for (const el of this._mediaEls) {
+        try { el.pause(); el.src = ''; } catch(_) {}
+      }
+    }
+    // 2. Ambient element (also in _mediaEls but belt+suspenders)
+    if (this._ambEl) {
+      try { this._ambEl.pause(); this._ambEl.src = ''; } catch(_) {}
+    }
+    // 3. One-shot ghost element
+    if (this._ghost) {
+      try { this._ghost.el.pause(); this._ghost.el.src = '';
+            if (this._ghost.el.parentNode) this._ghost.el.remove(); } catch(_) {}
+      this._ghost = null;
+    }
+    // 4. Persistent ghost elements
+    if (this._persistentGhosts) {
+      for (const id in this._persistentGhosts) {
+        const pg = this._persistentGhosts[id];
+        try { pg.el.pause(); pg.el.src = '';
+              if (pg.el.parentNode) pg.el.remove(); } catch(_) {}
+      }
+      this._persistentGhosts = {};
+    }
+    // 5. Delay-world bonfire elements
+    if (this._delayFirePts) {
+      for (const pt of this._delayFirePts) {
+        if (pt.el) try { pt.el.pause(); pt.el.src = ''; } catch(_) {}
+      }
+    }
+    // 6. Close AudioContext — kills all Web Audio graph processing
+    if (audio && audio.AC) {
+      try { audio.AC.close(); } catch(_) {}
+    }
+  }
+
+  // ─── Ghost audio: reverbed fragment that lingers after leaving a bubble ────
+  _startGhost(audio) {
+    const AC      = audio.AC;
+    const masterG = audio.masterG;
+    if (!AC || !masterG) return;
+
+    const b = this._lastEnteredBubble;
+    const ghostSrc = b && (b.ghost || b.inside);
+    if (!ghostSrc) return;
+
+    // Tear down previous ghost if any
+    if (this._ghost) {
+      try { this._ghost.el.pause(); this._ghost.el.src = ''; } catch(_) {}
+      this._ghost = null;
+    }
+
+    const ghostEl = new Audio();
+    ghostEl.src  = ghostSrc;
+    ghostEl.loop = true;
+    // Must be in DOM for reliable playback in Chrome after createMediaElementSource
+    document.body.appendChild(ghostEl);
+
+    try {
+      const mediaSrc = AC.createMediaElementSource(ghostEl);
+      const gainNode = AC.createGain();
+      const peakVol  = 0.18;   // boosted: direct gainNode→masterG (no captureStream boost)
+      const fadeIn   = 3.5;
+      const hold     = 4.0;
+      const fadeOut  = 30.0;
+      const now      = AC.currentTime;
+
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(peakVol, now + fadeIn);
+      gainNode.gain.setValueAtTime(peakVol, now + fadeIn + hold);
+      gainNode.gain.linearRampToValueAtTime(0, now + fadeIn + hold + fadeOut);
+
+      mediaSrc.connect(gainNode);
+      gainNode.connect(masterG);
+      ghostEl.play().catch(() => {});
+
+      // Random start position for "memory fragment" feel (after brief buffer)
+      setTimeout(() => {
+        if (ghostEl.duration > 10)
+          ghostEl.currentTime = Math.random() * Math.min(ghostEl.duration * 0.65, 50);
+      }, 300);
+
+      this._ghost = { el: ghostEl, gainNode, AC, endTime: now + fadeIn + hold + fadeOut, fading: false };
+    } catch(e) {
+      console.warn('[Ghost] error:', e.message);
+      // Still register the ghost so _updateGhost / bubble-entry code can silence it
+      ghostEl.volume = 0.18;
+      ghostEl.play().catch(() => {});
+      const fallbackEnd = AC.currentTime + 37.5; // fadeIn+hold+fadeOut
+      this._ghost = { el: ghostEl, gainNode: null, AC, endTime: fallbackEnd, fading: false };
+    }
+  }
+
+  // ─── Persistent ghost: quiet looping ghost tied to bubble visit ──────────
+  // Starts after first entry into a bubble that has a `ghost` file.
+  // Fades in slowly, then loops forever at peakVol — a "memory layer".
+  // Muted with slight lowpass. Fades out when entering ANY bubble (re-fades in on exit).
+  _startPersistentGhost(b, audio) {
+    if (!b.ghost) return;
+    const AC      = audio.AC;
+    const masterG = audio.masterG;
+    if (!AC || !masterG) return;
+    if (this._persistentGhosts[b.id]) return; // already running
+
+    const el  = new Audio();
+    el.src    = b.ghost;
+    el.loop   = true;
+    // Must be in DOM for reliable Chrome playback after createMediaElementSource
+    document.body.appendChild(el);
+
+    try {
+      const mediaSrc = AC.createMediaElementSource(el);
+
+      const lp = AC.createBiquadFilter();
+      lp.type            = 'lowpass';
+      lp.frequency.value = 900;
+      lp.Q.value         = 0.5;
+
+      const gainNode = AC.createGain();
+      const peakVol  = 0.12;   // boosted: direct gainNode→masterG (no captureStream boost)
+      const fadeIn   = 8.0;
+
+      gainNode.gain.setValueAtTime(0, AC.currentTime);
+      gainNode.gain.linearRampToValueAtTime(peakVol, AC.currentTime + fadeIn);
+
+      mediaSrc.connect(lp);
+      lp.connect(gainNode);
+      gainNode.connect(masterG);
+      el.play().catch(() => {});
+
+      this._persistentGhosts[b.id] = { el, gainNode, AC, peakVol, muted: false };
+      console.log(`[PersistentGhost] started for bubble ${b.name || b.id}`);
+    } catch(e) {
+      console.warn('[PersistentGhost] error:', e.message);
+      el.volume = 0.12;
+      el.play().catch(() => {});
+      this._persistentGhosts[b.id] = { el, gainNode: null, AC, peakVol: 0.12, muted: false };
+    }
+  }
+
+  // Called from _updateAudio each frame — mute ghosts while inside a bubble
+  _updatePersistentGhosts(audio) {
+    const inside = !!this._enteredBubble;
+    for (const id in this._persistentGhosts) {
+      const pg = this._persistentGhosts[id];
+      // Fallback path (no Web Audio graph) — control via el.volume directly
+      if (!pg.gainNode) {
+        if (pg.el) pg.el.volume = inside ? 0 : pg.peakVol;
+        continue;
+      }
+      const now     = pg.AC.currentTime;
+      const current = pg.gainNode.gain.value;
+
+      if (inside && !pg.muted) {
+        // Fade out quickly when entering bubble
+        pg.gainNode.gain.cancelScheduledValues(now);
+        pg.gainNode.gain.setValueAtTime(current, now);
+        pg.gainNode.gain.linearRampToValueAtTime(0, now + 1.5);
+        pg.muted = true;
+      } else if (!inside && pg.muted) {
+        // Fade back in on exit
+        pg.gainNode.gain.cancelScheduledValues(now);
+        pg.gainNode.gain.setValueAtTime(current, now);
+        pg.gainNode.gain.linearRampToValueAtTime(pg.peakVol, now + 5.0);
+        pg.muted = false;
+      }
+    }
+  }
+
+  // Synthetic reverb impulse response — warm, non-metallic
+  // Technique: exponential white noise → double low-pass → stereo decorrelation → normalize
+  // Double LP removes harsh high-frequency spikes that cause the metallic timbre.
+  // Pre-delay before the tail begins creates perceived space (room size impression).
+  // L/R offset decorrelates channels → wider, more natural stereo image.
+  _makeReverbIR(AC, durationSec = 7.0, decay = 1.8) {
+    const rate = AC.sampleRate;
+    const len  = Math.floor(rate * durationSec);
+    const buf  = AC.createBuffer(2, len, rate);
+    const pre  = Math.floor(rate * 0.018); // 18ms pre-delay
+
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+
+      // Step 1 — exponentially decaying white noise (after pre-delay)
+      for (let i = pre; i < len; i++) {
+        const t = (i - pre) / (len - pre);
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+      }
+
+      // Step 2 — two-pass low-pass filter (α=0.40) → removes metallic HF texture
+      const a = 0.40;
+      let prev = 0;
+      for (let i = 0; i < len; i++) { d[i] = prev = prev + a * (d[i] - prev); }
+      prev = 0;
+      for (let i = 0; i < len; i++) { d[i] = prev = prev + a * (d[i] - prev); }
+
+      // Step 3 — stereo decorrelation: right channel offset by 7ms
+      if (ch === 1) {
+        const off  = Math.floor(rate * 0.007);
+        const copy = new Float32Array(d);
+        for (let i = off; i < len; i++) d[i] = copy[i - off];
+        for (let i = 0; i < off; i++)   d[i] = 0;
+      }
+
+      // Step 4 — normalize to unit peak
+      let peak = 0;
+      for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(d[i]));
+      if (peak > 0) for (let i = 0; i < len; i++) d[i] /= peak;
+    }
+    return buf;
   }
 
   // ─── DRAW (inside shake transform) ────────────────────────────────────────
@@ -528,9 +1235,10 @@ export class WorldOne extends WorldBase {
     if (this._bubbleZoom > 0.01) this._drawBubbleInterior(ctx, renderer, t);
 
     // 14 — Culmination (all 3 visited)
-    if (this._culminationAlpha > 0.01 && this._bubbleZoom < 0.1) {
-      this._drawCulmination(ctx, renderer, t);
-    }
+    // culmination text removed per user request
+
+    // 15 — Intro overlay
+    if (this._introActive) this._drawIntro(ctx, renderer);
   }
 
   // ─── DRAW HUD (outside shake) ──────────────────────────────────────────────
@@ -538,32 +1246,75 @@ export class WorldOne extends WorldBase {
     const { CW, CH } = renderer;
     const { P } = this;
 
+    // ── Pause menu ──
+    if (this._paused) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(0, 0, CW, CH);
+
+      const items = ['RESUME', 'EXIT'];
+      const menuW = 220, itemH = 44;
+      const menuH = items.length * itemH + 60;
+      const mx = (CW - menuW) / 2, my = (CH - menuH) / 2;
+
+      // Background pill
+      ctx.fillStyle = 'rgba(12,10,8,0.96)';
+      ctx.strokeStyle = 'rgba(220,218,210,0.18)';
+      ctx.lineWidth = 1;
+      this._roundRect(ctx, mx - 20, my - 20, menuW + 40, menuH + 40, 4);
+      ctx.fill(); ctx.stroke();
+
+      // Title
+      ctx.font = 'bold 10px "Courier New", monospace';
+      ctx.letterSpacing = '0.30em';
+      ctx.fillStyle = 'rgba(220,218,210,0.28)';
+      ctx.textAlign = 'center';
+      ctx.fillText('P A U S E D', CW / 2, my + 14);
+
+      // Items
+      items.forEach((label, i) => {
+        const iy = my + 50 + i * itemH;
+        const isSel = i === this._pauseSel;
+
+        if (isSel) {
+          ctx.fillStyle = 'rgba(220,218,210,0.08)';
+          this._roundRect(ctx, mx, iy - 14, menuW, itemH - 8, 3);
+          ctx.fill();
+        }
+
+        ctx.font = `bold ${isSel ? 13 : 11}px "Courier New", monospace`;
+        ctx.fillStyle = isSel
+          ? (label === 'EXIT' ? 'rgba(240,120,100,0.95)' : 'rgba(220,218,210,0.95)')
+          : 'rgba(220,218,210,0.35)';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, CW / 2, iy + 4);
+
+        if (isSel) {
+          ctx.fillStyle = 'rgba(220,218,210,0.30)';
+          ctx.font = '9px "Courier New", monospace';
+          ctx.fillText('▶', mx + 16, iy + 4);
+        }
+      });
+
+      ctx.font = '8px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(220,218,210,0.18)';
+      ctx.fillText('↑ ↓  navigate  ·  ENTER  confirm', CW / 2, my + menuH + 16);
+      ctx.restore();
+      return;
+    }
+
     if (this._bubbleZoom >= 0.5) return;
 
     // Minimap
     this._drawMinimap(ctx, renderer);
 
-    // Coordinates + controls
+    // HUD — title only (no guide)
     ctx.save();
-    ctx.font = `10px Menlo, 'Courier New', monospace`;
-    ctx.fillStyle = 'rgba(158,165,162,0.20)';
+    ctx.font      = `300 11px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.30)';
     ctx.textAlign = 'left';
-    ctx.fillText('C O S M O S', 18, CH - 16);
-    const fx = (P.x / renderer.WW).toFixed(3), fy = (P.y / renderer.WH).toFixed(3);
-    ctx.fillText(`${fx} · ${fy}`, 18, CH - 30);
-    ctx.textAlign = 'right';
-    ctx.fillText('W A S D  /  ← ↑ ↓ →', CW - 18, CH - 16);
+    ctx.fillText('cosmos', 18, CH - 16);
 
-    // Nearest bubble distance
-    let nearest = null, minD = Infinity;
-    for (const b of this.bubbles) {
-      const d = Math.hypot(P.x - b.wx, P.y - b.wy);
-      if (d < minD) { minD = d; nearest = b; }
-    }
-    if (nearest && minD < 900) {
-      ctx.fillStyle = `rgba(175,182,178,${Math.min(0.32, (900-minD)/900*0.32)})`;
-      ctx.fillText(`${nearest.num}  ${Math.round(minD)}m`, CW - 18, CH - 30);
-    }
     ctx.restore();
   }
 
@@ -735,7 +1486,7 @@ export class WorldOne extends WorldBase {
       ctx.fillStyle = tg;
       ctx.fillRect(sx-55, sy-55, 110, 50);
       ctx.globalAlpha = le.alpha * 0.72;
-      ctx.font = `10px Menlo, 'Courier New', monospace`;
+      ctx.font = `400 10px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       ctx.fillStyle = 'rgba(185,192,188,1)';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
@@ -781,7 +1532,8 @@ export class WorldOne extends WorldBase {
           ctx.fillStyle = g; ctx.fillRect(sx-bleedR, sy-bleedR, bleedR*2, bleedR*2);
         }
       } else if (b.id === 2) {
-        const el = b1e && b1e.approachEl;
+        const b2e2 = this._bubbleSpatials[2];
+        const el = b2e2 && (b2e2.videoEl || b2e2.approachEl);
         if (el && el.readyState >= 2) bleedVideo(el);
         else {
           const g = ctx.createRadialGradient(sx,sy,0, sx,sy,bleedR);
@@ -824,107 +1576,49 @@ export class WorldOne extends WorldBase {
     const r   = b.r * pulse;
     const pal = BUBBLE_PALETTES[b.id - 1];
 
-    // ── Clipped interior ──
+    const SANS = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+
+    // ── Flat fill + clipped video ──
     ctx.save();
     ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2); ctx.clip();
 
-    // ① Stone base
-    const base = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
-    base.addColorStop(0,    `rgba(${pal.b0},${near ? 0.78 : 0.50})`);
-    base.addColorStop(0.62, `rgba(${pal.b1},${near ? 0.86 : 0.60})`);
-    base.addColorStop(1,    `rgba(${pal.b2},${near ? 0.96 : 0.75})`);
-    ctx.fillStyle = base; ctx.fillRect(sx-r, sy-r, r*2, r*2);
+    // flat base colour
+    ctx.fillStyle = near ? `rgba(${pal.b0},0.72)` : `rgba(${pal.b1},0.42)`;
+    ctx.fillRect(sx-r, sy-r, r*2, r*2);
 
-    // ② Video frame
+    // video thumbnail (clipped)
     const entry  = this._bubbleSpatials[b.id];
     const vidEl  = b.id === 1 ? (entry && entry.insideEl)
-                 : b.id === 2 ? (entry && entry.approachEl) : null;
+                 : b.id === 2 ? (entry && (entry.videoEl || entry.approachEl)) : null;
     if (vidEl && vidEl.readyState >= 2) {
       const vw = vidEl.videoWidth || 1, vh = vidEl.videoHeight || 1;
       const scale = (r * 2) / Math.min(vw, vh);
-      ctx.globalAlpha = near ? 0.70 : 0.45;
+      ctx.globalAlpha = near ? 0.55 : 0.28;
       ctx.drawImage(vidEl, sx - vw*scale/2, sy - vh*scale/2, vw*scale, vh*scale);
       ctx.globalAlpha = 1;
     }
-
-    // ③ Mineral patches
-    for (let k = 0; k < 7; k++) {
-      const ox = (this._sr(b.id*41+k*9)   - 0.5) * r * 1.3;
-      const oy = (this._sr(b.id*41+k*9+1) - 0.5) * r * 1.3;
-      const pr = (0.06 + this._sr(b.id*41+k*9+2) * 0.16) * r;
-      const pa = (0.03 + this._sr(b.id*41+k*9+3) * 0.07) * (near ? 1.6 : 0.9);
-      ctx.fillStyle = `rgba(${pal.dm},${pa})`;
-      ctx.beginPath(); ctx.arc(sx+ox, sy+oy, pr, 0, Math.PI*2); ctx.fill();
-    }
-
-    // ④ Diffuse light
-    const diff = ctx.createRadialGradient(sx-r*0.28, sy-r*0.34, 0, sx, sy, r*1.05);
-    diff.addColorStop(0,    `rgba(${pal.df},${near ? 0.58 : 0.30})`);
-    diff.addColorStop(0.55, `rgba(${pal.dm},${near ? 0.18 : 0.08})`);
-    diff.addColorStop(1,    'rgba(0,0,0,0)');
-    ctx.fillStyle = diff; ctx.fillRect(sx-r, sy-r, r*2, r*2);
-
-    // ⑤ Specular
-    const specX = sx-r*0.28, specY = sy-r*0.33;
-    const spec  = ctx.createRadialGradient(specX, specY, 0, specX, specY, r*0.22);
-    spec.addColorStop(0,   `rgba(230,238,242,${near ? 0.68 : 0.24})`);
-    spec.addColorStop(0.5, `rgba(230,238,242,${near ? 0.10 : 0.03})`);
-    spec.addColorStop(1,   'rgba(230,238,242,0)');
-    ctx.fillStyle = spec; ctx.fillRect(sx-r, sy-r, r*2, r*2);
-
-    // ⑥ Micro-specular
-    const s2x = sx+r*0.20, s2y = sy-r*0.08;
-    const sp2  = ctx.createRadialGradient(s2x, s2y, 0, s2x, s2y, r*0.09);
-    sp2.addColorStop(0, `rgba(215,228,232,${near ? 0.25 : 0.07})`);
-    sp2.addColorStop(1, 'rgba(215,228,232,0)');
-    ctx.fillStyle = sp2; ctx.fillRect(sx-r, sy-r, r*2, r*2);
-
-    // ⑦ Rim shadow
-    const rim = ctx.createRadialGradient(sx+r*0.22, sy+r*0.28, r*0.50, sx, sy, r);
-    rim.addColorStop(0, 'rgba(0,0,0,0)');
-    rim.addColorStop(1, `rgba(0,0,0,${near ? 0.55 : 0.32})`);
-    ctx.fillStyle = rim; ctx.fillRect(sx-r, sy-r, r*2, r*2);
     ctx.restore();
 
-    // ── Exterior (no clip) ──
+    // ── Ring + label (no clip) ──
     ctx.save();
-
-    // ⑧ Outer ring
     ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2);
-    ctx.strokeStyle = near ? `rgba(${pal.rng},0.82)` : `rgba(${pal.rng},0.35)`;
-    ctx.lineWidth   = near ? 1.4 : 0.8;
+    ctx.strokeStyle = near ? `rgba(255,255,255,0.55)` : `rgba(255,255,255,0.18)`;
+    ctx.lineWidth   = 1;
     ctx.stroke();
 
-    // ⑨ Growth rings
-    ctx.beginPath(); ctx.arc(sx+r*0.05, sy+r*0.04, r*0.70, 0, Math.PI*2);
-    ctx.strokeStyle = near ? `rgba(${pal.inn},0.16)` : `rgba(${pal.inn},0.06)`;
-    ctx.lineWidth   = 0.5; ctx.stroke();
-    ctx.beginPath(); ctx.arc(sx-r*0.07, sy-r*0.05, r*0.43, 0, Math.PI*2);
-    ctx.strokeStyle = near ? `rgba(${pal.inn},0.10)` : `rgba(${pal.inn},0.04)`;
-    ctx.stroke();
-
-    // ⑩ Outer halo
-    const halo = ctx.createRadialGradient(sx, sy, r*0.75, sx, sy, r*2.4);
-    halo.addColorStop(0, `rgba(${pal.halo},${near ? 0.11 : 0.04})`);
-    halo.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = halo;
-    ctx.beginPath(); ctx.arc(sx, sy, r*2.4, 0, Math.PI*2); ctx.fill();
-
-    // ⑪ Numeral
-    const fSz = Math.round(r * 0.42);
-    ctx.font         = `300 ${fSz}px Palatino, 'Palatino Linotype', Georgia, serif`;
+    // name label
+    const label = (b.name || b.num).toLowerCase();
+    ctx.font         = `300 12px ${SANS}`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle    = 'rgba(0,0,0,0.42)';
-    ctx.fillText(b.num, sx+1, sy+1);
-    ctx.fillStyle = near ? `rgba(${pal.num_n},0.88)` : `rgba(${pal.num_f},0.38)`;
-    ctx.fillText(b.num, sx, sy);
+    ctx.fillStyle    = near ? `rgba(255,255,255,0.80)` : `rgba(255,255,255,0.30)`;
+    ctx.fillText(label, sx, sy);
 
-    // ⑫ Entry hint
+    // entry hint
     if (near) {
-      ctx.font      = `11px Menlo, 'Courier New', monospace`;
-      ctx.fillStyle = `rgba(${pal.num_f},0.35)`;
-      ctx.fillText('[ enter ]', sx, sy + r + 14);
+      ctx.font      = `400 9px ${SANS}`;
+      ctx.fillStyle = `rgba(255,255,255,0.38)`;
+      ctx.fillText('enter', sx, sy + r + 13);
     }
     ctx.restore();
   }
@@ -1060,16 +1754,16 @@ export class WorldOne extends WorldBase {
       const sx = pt.wx - cam.x, sy = pt.wy - cam.y;
       if (sx < -60 || sx > CW + 60 || sy < -60 || sy > CH + 60) return;
       const dist   = Math.hypot(P.x - pt.wx, P.y - pt.wy);
-      const active = dist < 200;
-      const near   = dist < 400;
+      const active = dist < 260;
+      const near   = dist < 500;
       this._drawBonfire(ctx, sx, sy, active, t);
-      if (active) {
+      if (near) {
         ctx.save();
-        ctx.globalAlpha = Math.max(0, 1 - dist / 200) * 0.55;
-        ctx.font = `9px Menlo, 'Courier New', monospace`;
-        ctx.fillStyle = 'rgba(185,192,188,1)';
+        ctx.globalAlpha = Math.max(0, 1 - dist / 500) * 0.95;
+        ctx.font = `500 12px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+        ctx.fillStyle = active ? 'rgba(255,255,255,1)' : 'rgba(220,225,220,0.90)';
         ctx.textAlign = 'center';
-        ctx.fillText('◉ recording', sx, sy - 24);
+        ctx.fillText('◉ REC', sx, sy - 38);
         ctx.restore();
       }
     });
@@ -1078,83 +1772,109 @@ export class WorldOne extends WorldBase {
   _drawBonfire(ctx, sx, sy, active, t) {
     ctx.save();
     ctx.translate(sx, sy);
+    ctx.scale(2.8, 2.8);
 
-    const flicker = active ? 1 + Math.sin(t * 0.22) * 0.16 + Math.sin(t * 0.37) * 0.09 : 0.5;
+    // t is frame count (~60fps). tf ≈ seconds
+    const tf = t * 0.017;
+    const f1 = Math.sin(tf * 4.1)  * 0.18 + Math.sin(tf * 7.3)  * 0.09;
+    const f2 = Math.sin(tf * 5.7)  * 0.14 + Math.sin(tf * 3.1)  * 0.11;
+    const f3 = Math.sin(tf * 6.2)  * 0.12 + Math.sin(tf * 9.8)  * 0.07;
+    const flicker = active ? 1 + f1 : 0.45;
 
-    // Ground glow when active
+    // ── Ground glow — flat, no gradient (gradients kill framerate) ───────────
     if (active) {
-      ctx.globalAlpha = 0.08 * flicker;
-      const g = ctx.createRadialGradient(0, 4, 0, 0, 4, 24);
-      g.addColorStop(0, 'rgba(240,220,160,1)');
-      g.addColorStop(1, 'rgba(240,200,80,0)');
-      ctx.fillStyle = g;
+      ctx.globalAlpha = 0.09 * flicker;
+      ctx.fillStyle   = '#fff';
       ctx.beginPath();
-      ctx.ellipse(0, 6, 24, 11, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 5, 30 + f1 * 5, 11, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Ground shadow
-    ctx.globalAlpha = 0.28;
-    ctx.fillStyle   = 'rgba(0,0,0,0.6)';
+    // ── Ground shadow ──────────────────────────────────────────────────────────
+    ctx.globalAlpha = 0.38;
+    ctx.fillStyle   = 'rgba(0,0,0,0.8)';
     ctx.beginPath();
-    ctx.ellipse(1, 7, 12, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(1, 8, 13, 4.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Three base stones — black fill, white stroke (B&W character style)
-    ctx.globalAlpha = 0.90;
-    ctx.lineWidth   = 1.1;
+    // ── Base stones ────────────────────────────────────────────────────────────
+    ctx.globalAlpha = 0.95;
+    ctx.lineWidth   = 1.2;
     for (let i = 0; i < 3; i++) {
       const a  = (i / 3) * Math.PI * 2 - Math.PI / 2;
-      const bx = Math.cos(a) * 6;
-      const by = Math.sin(a) * 3.5 + 5;
-      ctx.fillStyle   = 'rgba(14,12,8,0.95)';
-      ctx.strokeStyle = 'rgba(175,170,158,0.80)';
+      const bx = Math.cos(a) * 6.5;
+      const by = Math.sin(a) * 4 + 5;
+      ctx.fillStyle   = 'rgba(14,12,8,0.98)';
+      ctx.strokeStyle = 'rgba(200,192,175,0.85)';
       ctx.beginPath();
-      ctx.ellipse(bx, by, 5, 3.5, a * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      ctx.ellipse(bx, by, 5.5, 3.8, a * 0.3, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
     }
 
-    // Crossed logs — white highlight on black body
-    const logCol   = 'rgba(14,12,8,0.95)';
-    const logLight = 'rgba(170,165,152,0.70)';
+    // ── Crossed logs ───────────────────────────────────────────────────────────
     ctx.lineCap = 'round';
     [Math.PI / 5, -Math.PI / 5].forEach(angle => {
-      ctx.save();
-      ctx.rotate(angle);
-      // thick dark body
-      ctx.strokeStyle = logCol;
-      ctx.lineWidth   = 3.5;
-      ctx.beginPath();
-      ctx.moveTo(-9, 5); ctx.lineTo(9, -3);
-      ctx.stroke();
-      // thin light edge
-      ctx.strokeStyle = logLight;
-      ctx.lineWidth   = 1.2;
-      ctx.stroke();
-      ctx.restore();
+      ctx.save(); ctx.rotate(angle);
+      ctx.strokeStyle = 'rgba(14,12,8,0.98)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(-9, 6); ctx.lineTo(9, -2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(185,178,160,0.75)'; ctx.lineWidth = 1.3;
+      ctx.stroke(); ctx.restore();
     });
 
-    // Flame
-    const fh = (active ? 10 : 5) * flicker;
-    ctx.globalAlpha = active ? 0.88 : 0.35;
+    if (!active) {
+      // Dormant: small white ember
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = 'rgba(220,220,220,0.8)';
+      ctx.beginPath(); ctx.ellipse(0, 2, 2.5, 1.2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore(); return;
+    }
 
-    // Outer black flame shape
-    ctx.fillStyle = 'rgba(8,6,4,0.92)';
+    // ── Flame layers — black & white ──────────────────────────────────────────
+    const fh = 11 * flicker;
+    const flameLayers = [
+      { w: 6.5, sway: f1 * 2.8, h: fh,        col: 'rgba(60,60,60,0.60)'   },
+      { w: 4.5, sway: f2 * 2.0, h: fh * 0.88, col: 'rgba(140,140,140,0.70)' },
+      { w: 2.5, sway: f3 * 1.4, h: fh * 0.72, col: 'rgba(255,255,255,0.88)' },
+    ];
+
+    // Outer black silhouette
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = 'rgba(0,0,0,0.96)';
     ctx.beginPath();
-    ctx.moveTo(0, 1);
-    ctx.bezierCurveTo(-5, -fh * 0.45, -4, -fh * 0.88, 0, -fh - 1);
-    ctx.bezierCurveTo(4, -fh * 0.88, 5, -fh * 0.45, 0, 1);
+    ctx.moveTo(-7, 2);
+    ctx.bezierCurveTo(-6 + f1*2, -fh*0.4, -5 + f2*1.5, -fh*0.85, f1*1.5, -fh - 2);
+    ctx.bezierCurveTo(5 + f2*1.5, -fh*0.85, 6 + f1*2, -fh*0.4, 7, 2);
     ctx.fill();
 
-    // White inner flame
-    ctx.globalAlpha = active ? 0.80 * flicker : 0.28;
-    ctx.fillStyle   = 'rgba(235,228,205,1)';
-    ctx.beginPath();
-    ctx.moveTo(0, 1);
-    ctx.bezierCurveTo(-2.5, -fh * 0.35, -2, -fh * 0.72, 0, -fh * 0.92);
-    ctx.bezierCurveTo(2, -fh * 0.72, 2.5, -fh * 0.35, 0, 1);
-    ctx.fill();
+    // Grey→white inner tongues
+    flameLayers.forEach(({ w, sway, h, col }) => {
+      ctx.globalAlpha = 0.85 * flicker;
+      ctx.fillStyle   = col;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.6, 1);
+      ctx.bezierCurveTo(-w * 0.5 + sway * 0.6, -h * 0.4,
+                        -w * 0.3 + sway * 0.9,  -h * 0.85,
+                         sway,                   -h);
+      ctx.bezierCurveTo( w * 0.3 + sway * 0.9,  -h * 0.85,
+                         w * 0.5 + sway * 0.6,  -h * 0.4,
+                         w * 0.6,                1);
+      ctx.fill();
+    });
+
+    // ── Sparks — white only ────────────────────────────────────────────────────
+    for (let s = 0; s < 10; s++) {
+      const phase = s / 10;
+      const age   = ((tf * 0.8 + phase * 1.3) % 1.0);
+      if (age > 0.85) continue;
+      const life  = 1 - age / 0.85;
+      const spx   = Math.sin(phase * Math.PI * 6.2 + tf * 3.1) * 4 * (1 - age * 0.5);
+      const spy   = -age * (fh + 10) - 2;
+      const sr    = life * 1.4;
+      const grey  = Math.round(255 * (1 - age * 0.6));
+      ctx.globalAlpha = life * 0.90;
+      ctx.fillStyle   = `rgba(${grey},${grey},${grey},1)`;
+      ctx.beginPath(); ctx.arc(spx, spy, sr, 0, Math.PI * 2); ctx.fill();
+    }
 
     ctx.restore();
   }
@@ -1213,12 +1933,219 @@ export class WorldOne extends WorldBase {
       ctx.beginPath(); ctx.moveTo(-7,-5.5); ctx.lineTo(3,0); ctx.lineTo(-7,5.5); ctx.stroke();
 
       ctx.rotate(-Math.atan2(ny, nx));
-      ctx.font = `9px Palatino, 'Palatino Linotype', Georgia, serif`;
+      ctx.font = `400 9px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       ctx.fillStyle = 'rgba(188,195,192,0.88)';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(b.num, 0, -13);
       ctx.restore();
     });
+  }
+
+  // ─── Genesis texture: world-space text landscape ────────────────────────────
+  // Fragments are placed at fixed world coordinates (4200×3000).
+  // The camera follows the player so walking reveals different myth fragments.
+  // Dense coverage: ~200 fragments across the world.
+  _drawGenesis(ctx, renderer, t, bZ) {
+    const { CW, CH, cam } = renderer;
+
+    if (!this._genesisFragments) {
+      const raw = [
+        // ── Kalevala (Finnish/Karelian) ──
+        'Ильматар', 'в первозданных водах', 'утка снесла яйцо',
+        'из яйца родился мир', 'нижняя — земля', 'верхняя — небо',
+        'желток — солнце', 'белок — луна', 'Вяйнямёйнен',
+        'ilmatar', 'väinämöinen', 'louhi', 'sampo', 'kalevala',
+        'kantele', 'pohjola', 'vipunen', 'aino', 'kullervo',
+        // ── Gilgamesh (Akkadian / Sumerian) ──
+        'Гильгамеш', 'бессмертие', 'Утнапиштим', 'на краю мира',
+        'трава на дне', 'великий потоп', 'Энкиду', 'кедровый лес',
+        'gilgamesh', 'enkidu', 'ishtar', 'anu', 'enlil', 'ea',
+        'uruk', 'humbaba', 'siduri', 'urshanabi', 'dilmun',
+        // ── Farsi / Persian (Shahnameh, Avesta) ──
+        'آب', 'آتش', 'خاک', 'باد',
+        'آفرینش', 'زندگی', 'مرگ', 'جاودانگی',
+        'اهورا مزدا', 'اهریمن', 'رستم', 'سیمرغ', 'زال',
+        'زرتشت', 'اوستا', 'یزدان', 'دیو', 'فرّه',
+        // ── Dreamtime (Australian) ──
+        'Радужный Змей', 'ползёт по земле', 'русла рек',
+        'Время Сновидений', 'предки здесь', 'каждый холм — история',
+        'Байаме', 'songline', 'dreaming', 'country', 'altjira',
+        'tjukurpa', 'mimi', 'wandjina', 'yolŋu', 'arnhem',
+        // ── Northern (Nenets / Evenki / Komi / Saami) ──
+        'гагара нырнула', 'достала землю со дна', 'Нум послал птиц',
+        'Экшэри', 'первозданный океан', 'шаман Дох', 'мировая ось',
+        'земля пьёт воду', 'гагара', 'ворон', 'горностай',
+        'Ен и Омöль', 'ялмаль', 'нганасаны', 'луохти',
+        // ── English — myth / creation ──
+        'before the world was made', 'the waters had no name',
+        'the duck laid seven eggs', 'lower half became the earth',
+        'the hero sought the plant of life', 'he found it at the bottom',
+        'the serpent took it from him', 'he returned empty-handed',
+        'the ancestors are still here', 'every hill has a story',
+        'the flood came without warning', 'two survivors on the mountain',
+        'she floated on the primordial sea', 'the egg broke open',
+        'the sky pressed down on the earth', 'a bird brought mud from below',
+        'the shaman dove to the bottom', 'the loon retrieved the soil',
+        'the fire was stolen from the sun', 'the raven carried it in its beak',
+        'the cedar forest was dark and vast', 'they cut down the tallest tree',
+        'death is the fate of all mortals', 'when the gods made mankind',
+        'the land was singing long before us', 'country knows your name',
+        'the rainbow serpent made the rivers', 'the dreaming never ended',
+        'origin', 'flood', 'egg', 'dust', 'breath', 'water', 'fire',
+        'void', 'first light', 'before time', 'in the beginning',
+        'the world was dark', 'nothing moved', 'then a sound',
+        // ── Runes / Symbols ──
+        'ᛟ', 'ᚢ', 'ᛗ', 'ᚠ', 'ᚱ', 'ᛁ', 'ᛞ', 'ᚨ', 'ᚾ', 'ᛃ',
+        '∞', '◈', '⊗', '☽', '☀', '⊕',
+        // ── CJK ──
+        '水', '火', '土', '風', '空', '天', '地', '龍', '鳥',
+        // ── Glitch ──
+        '01001110', '11110000', '▓▒░', '////', '_ _ _',
+        'error', 'null', 'overflow', 'signal', 'noise',
+      ];
+
+      // World dimensions (must match config)
+      const WW = 4200, WH = 3000;
+      const seed = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+      // Tile the raw texts across the world — repeat to fill ~200 fragments
+      const fragments = [];
+      let fi = 0;
+      while (fragments.length < 210) {
+        const text  = raw[fi % raw.length];
+        const i     = fi;
+        // quadratic size distribution: many small, a few huge
+        const sz    = 10 + seed(i * 17) * seed(i * 29) * 90;
+        fragments.push({
+          text,
+          wx:    80  + seed(i * 3)    * (WW - 160),   // world X
+          wy:    80  + seed(i * 3 + 1) * (WH - 160),  // world Y
+          rot:   (seed(i * 5) - 0.5) * 1.0,
+          vrot:  (seed(i * 11) - 0.5) * 0.0005,       // slow drift rotation
+          phase: seed(i * 13) * Math.PI * 2,
+          size:  sz,
+          layer: Math.floor(seed(i * 19) * 3),        // 0=dim 1=mid 2=bright
+        });
+        fi++;
+      }
+      this._genesisFragments = fragments;
+      this._genT = 0;
+    }
+
+    this._genT = (this._genT || 0) + 0.016;
+    // slow autonomous rotation only — no positional drift
+    for (const f of this._genesisFragments) {
+      f.rot += f.vrot;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = bZ;
+
+    // Full black background
+    ctx.fillStyle = 'rgb(0,0,2)';
+    ctx.fillRect(0, 0, CW, CH);
+
+    // Glitch scanlines (screen-space, always visible)
+    const gs = Math.floor(this._genT * 1.1) % 91;
+    for (let g = 0; g < 4; g++) {
+      const gy  = ((gs * 41 + g * 109) % 100) / 100 * CH;
+      const gh  = 1 + (gs * 7 + g) % 2;
+      const gal = 0.08 + ((gs * 17 + g * 31) % 60) / 400;
+      ctx.save();
+      ctx.globalAlpha = gal * bZ;
+      ctx.fillStyle = 'rgba(255,255,255,1)';
+      ctx.fillRect(0, gy, CW, gh);
+      ctx.restore();
+    }
+
+    // World-space text fragments — transform with camera
+    const alphaByLayer  = [0.22, 0.52, 0.92];
+    const colourByLayer = [
+      'rgba(180,185,210,',  // far  — cool muted white
+      'rgba(255,242,220,',  // mid  — warm cream
+      'rgba(255,255,255,',  // near — pure white
+    ];
+
+    // Only draw fragments visible on screen + margin
+    const margin = 120;
+    for (const f of this._genesisFragments) {
+      const sx = f.wx - cam.x;
+      const sy = f.wy - cam.y;
+      if (sx < -margin || sx > CW + margin || sy < -margin || sy > CH + margin) continue;
+
+      const pulse = 0.5 + 0.5 * Math.sin(this._genT * 0.4 + f.phase);
+      const alpha = (alphaByLayer[f.layer] * (0.55 + 0.45 * pulse)) * bZ;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(f.rot);
+      ctx.globalAlpha = alpha;
+      ctx.font = f.size > 32
+        ? `300 ${f.size}px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`
+        : `400 ${f.size}px 'Courier New',monospace`;
+      ctx.fillStyle    = colourByLayer[f.layer] + '1)';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(f.text, 0, 0);
+      ctx.restore();
+    }
+
+    // Vignette — darkens edges, player stays readable in centre
+    const vig = ctx.createRadialGradient(CW/2, CH/2, CH * 0.08, CW/2, CH/2, CH * 0.62);
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, `rgba(0,0,0,${bZ * 0.80})`);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle   = vig;
+    ctx.fillRect(0, 0, CW, CH);
+
+    ctx.restore();
+  }
+
+  // ─── Intro screen ─────────────────────────────────────────────────────────
+  _drawIntro(ctx, renderer) {
+    const { CW, CH } = renderer;
+    const SANS = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+    const cx   = CW / 2;
+
+    ctx.save();
+    ctx.fillStyle = 'rgb(0,0,0)';
+    ctx.fillRect(0, 0, CW, CH);
+
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+
+    const W = 'rgba(255,255,255,0.62)';
+    ctx.font = `300 11px ${SANS}`;
+
+    // All lines — same font, same colour, same weight
+    const rows = [
+      ['',      'cosmos',        true],   // [label, key, center]
+      ['',      '',              false],  // spacer
+      ['move',        'W A S D', false],
+      ['enter world', 'Enter',   false],
+      ['exit world',  'Esc',     false],
+      ['pause',       'Esc  (on map)', false],
+      ['',      '',              false],  // spacer
+      ['',      'click or press any key', true],
+    ];
+
+    let y = CH / 2 - 64;
+    for (const [label, key, center] of rows) {
+      if (!label && !key) { y += 14; continue; }
+      ctx.fillStyle = W;
+      if (center) {
+        ctx.textAlign = 'center';
+        ctx.fillText(key, cx, y);
+      } else {
+        ctx.textAlign = 'right';
+        ctx.fillText(label, cx - 14, y);
+        ctx.textAlign = 'left';
+        ctx.fillText(key, cx + 14, y);
+      }
+      y += 20;
+    }
+
+    ctx.restore();
   }
 
   _drawBubbleInterior(ctx, renderer, t) {
@@ -1236,7 +2163,7 @@ export class WorldOne extends WorldBase {
       ctx.fillRect(0, 0, CW, CH);
 
       const b2e = this._bubbleSpatials[2];
-      const el  = b2e && b2e.approachEl;
+      const el  = b2e && (b2e.videoEl || b2e.approachEl); // videoEl when approach is audio
       if (el && el.readyState >= 2) {
         const b2  = this.bubbles[1];
         const sc  = 1.20;
@@ -1269,58 +2196,74 @@ export class WorldOne extends WorldBase {
         // ── Bubble I: desert video ──
         const b1e = this._bubbleSpatials[1];
         const el  = b1e && b1e.insideEl;
+        // Keep-alive: Chrome may pause offscreen video elements — restart silently if needed
+        if (el && el.paused && !el._playPending) {
+          el._playPending = true;
+          el.play().then(() => { el._playPending = false; }).catch(() => { el._playPending = false; });
+        }
         if (el && el.readyState >= 2) {
           const vw = el.videoWidth || 16, vh = el.videoHeight || 9;
           const aspect = vw / vh;
-          let dw = CW*0.90, dh = dw/aspect;
-          if (dh > CH*0.90) { dh = CH*0.90; dw = dh*aspect; }
+          // Fill screen edge-to-edge (cover), not 90% — avoids dark border + looks cinematic
+          let dw, dh;
+          if (CW / CH > aspect) { dw = CW; dh = CW / aspect; }
+          else                  { dh = CH; dw = CH * aspect; }
           ctx.globalAlpha = bZ;
           ctx.drawImage(el, CW/2-dw/2, CH/2-dh/2, dw, dh);
         }
 
       } else if (bId === 3) {
-        // ── Bubble III: ritual rune chamber ──
-        ctx.save();
-        ctx.globalAlpha = bZ * 0.85;
-        const pulse3 = 0.5 + Math.sin(t*0.027)*0.5;
-        const fg = ctx.createRadialGradient(CW/2, CH*1.1, 0, CW/2, CH*1.1, CH*0.9);
-        fg.addColorStop(0,   `rgba(44,62,22,${pulse3*0.35})`);
-        fg.addColorStop(0.4, `rgba(24,38,12,${pulse3*0.18})`);
-        fg.addColorStop(1,   'rgba(0,0,0,0)');
-        ctx.fillStyle = fg; ctx.fillRect(0,0,CW,CH);
-        ctx.translate(CW/2, CH/2);
-        const runeSet = 'ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ';
-        [[200,24,t*0.0006,0.12],[140,16,-t*0.0009,0.18],[80,8,t*0.0015,0.28]].forEach(([r,n,rot,alpha]) => {
-          for (let i = 0; i < n; i++) {
-            const ang = (i/n)*Math.PI*2 + rot;
-            ctx.save();
-            ctx.translate(Math.cos(ang)*r, Math.sin(ang)*r);
-            ctx.rotate(ang + Math.PI/2);
-            ctx.font = `300 ${8+r/40}px Palatino, 'Palatino Linotype', Georgia, serif`;
-            ctx.fillStyle = `rgba(165,182,160,${alpha*(0.6+0.4*Math.sin(t*0.02+i))})`;
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(runeSet[i % runeSet.length], 0, 0);
-            ctx.restore();
-          }
-          ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
-          ctx.strokeStyle = `rgba(128,148,124,${alpha*0.35})`;
-          ctx.lineWidth = 0.5; ctx.stroke();
-        });
-        ctx.font = `300 ${38+pulse3*8}px Palatino, 'Palatino Linotype', Georgia, serif`;
-        ctx.fillStyle = `rgba(185,200,180,${0.50+pulse3*0.22})`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('ᛟ', 0, 0);
-        ctx.restore();
+        // ── Bubble III: genesis — world-space text, player walks through it ──
+        this._drawGenesis(ctx, renderer, t, bZ);
+        // Delay-world bonfires
+        this._drawDelayFires(ctx, renderer, t, bZ);
+        ctx.globalAlpha = bZ;
+        this._drawFootprints(ctx, renderer);
+        this._drawPlayer(ctx, renderer, t);
+        ctx.globalAlpha = 1;
       }
     }
 
-    // ESC hint
-    ctx.globalAlpha = bZ * 0.35;
-    ctx.font = `10px Menlo, 'Courier New', monospace`;
-    ctx.fillStyle = 'rgba(175,182,180,1)';
+    // World name — large, top-center
+    const worldName = (this._enteredBubble || this._lastEnteredBubble)?.name || '';
+    if (worldName) {
+      const SANS = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+      ctx.globalAlpha = bZ * 0.55;
+      ctx.font         = `200 84px ${SANS}`;
+      ctx.fillStyle    = 'rgba(255,255,255,1)';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(worldName.replace(/_/g, ' '), CW / 2, 18);
+      ctx.textBaseline = 'middle';
+    }
+
+    // exit hint
+    ctx.globalAlpha = bZ * 0.25;
+    ctx.font = `300 10px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,1)';
     ctx.textAlign = 'center';
-    ctx.fillText('[ esc / enter ]', CW/2, CH - 18);
+    ctx.fillText('esc', CW/2, CH - 18);
     ctx.restore();
+  }
+
+  // ─── Delay-world bonfires (world-space, drawn inside bubble III) ────────────
+  _drawDelayFires(ctx, renderer, t, bZ) {
+    if (!this._delayFirePts || bZ < 0.01) return;
+    const { cam, CW, CH } = renderer;
+    const { P } = this;
+    const margin = 180;
+
+    for (const pt of this._delayFirePts) {
+      const sx = pt.wx - cam.x;
+      const sy = pt.wy - cam.y;
+      // Cull off-screen
+      if (sx < -margin || sx > CW + margin || sy < -margin || sy > CH + margin) continue;
+
+      const dist   = Math.hypot(P.x - pt.wx, P.y - pt.wy);
+      const active = dist < 320;
+      // Use phase offset so each fire flickers independently
+      this._drawBonfire(ctx, sx, sy, active, t + Math.floor(pt._phase * 120));
+    }
   }
 
   _drawCulmination(ctx, renderer, t) {
@@ -1333,21 +2276,21 @@ export class WorldOne extends WorldBase {
     const cfa1 = Math.min(1, (this._culminationTimer -  80) / 120) * this._culminationAlpha;
     if (cfa1 > 0) {
       ctx.globalAlpha = cfa1 * 0.68;
-      ctx.font = `300 14px Palatino, 'Palatino Linotype', Georgia, serif`;
-      ctx.fillStyle = 'rgba(195,202,200,1)';
-      ctx.fillText('ᛟ · the circle is complete · ᛟ', CW/2, CH/2 - 24);
+      ctx.font = `300 14px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,1)';
+      ctx.fillText('the circle is complete', CW/2, CH/2 - 24);
     }
     const cfa2 = Math.min(1, (this._culminationTimer - 220) / 120) * this._culminationAlpha;
     if (cfa2 > 0) {
       ctx.globalAlpha = cfa2 * 0.46;
-      ctx.font = `10px Menlo, 'Courier New', monospace`;
+      ctx.font = `400 10px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       ctx.fillStyle = 'rgba(172,180,178,1)';
       ctx.fillText('all portals visited', CW/2, CH/2 - 4);
     }
     const cfa3 = Math.min(1, (this._culminationTimer - 370) / 180) * this._culminationAlpha;
     if (cfa3 > 0) {
       ctx.globalAlpha = cfa3 * 0.30;
-      ctx.font = `9px Menlo, 'Courier New', monospace`;
+      ctx.font = `400 9px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       ctx.fillStyle = 'rgba(155,162,160,1)';
       ctx.fillText('the echo persists', CW/2, CH/2 + 16);
     }
@@ -1357,35 +2300,43 @@ export class WorldOne extends WorldBase {
   _drawMinimap(ctx, renderer) {
     const { CW, CH, WW, WH, cam } = renderer;
     const { P } = this;
-    const mw = 41, mh = Math.round(41 * WH / WW);
-    const mx = CW - mw - 16, my = CH - mh - 16;
+    const mw = 220, mh = Math.round(220 * WH / WW);
+    const mx = 18, my = CH - mh - 48;
     const sx = mw / WW, sy2 = mh / WH;
 
     ctx.save();
-    ctx.fillStyle   = 'rgba(0,0,0,0.48)';
-    ctx.strokeStyle = 'rgba(180,162,130,0.22)';
-    ctx.lineWidth   = 0.5;
-    ctx.fillRect(mx, my, mw, mh);
+
+    // Background + border
+    ctx.fillStyle   = 'rgba(0,0,0,0.62)';
+    ctx.fillRect(mx - 1, my - 1, mw + 2, mh + 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth   = 1.5;
     ctx.strokeRect(mx, my, mw, mh);
 
     // Viewport rect
-    ctx.strokeStyle = 'rgba(180,162,130,0.18)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.lineWidth   = 1;
     ctx.strokeRect(mx + cam.x*sx, my + cam.y*sy2, CW*sx, CH*sy2);
 
     // Bubbles
-    const mmPal = ['175,158,140','148,165,178','145,168,140'];
+    const mmPal = ['210,190,160','170,200,222','165,210,158'];
     this.bubbles.forEach(b => {
       const bx      = mx + b.wx*sx, by = my + b.wy*sy2;
       const visited = this._visitedBubbles.has(b.id);
       const mc      = mmPal[b.id - 1];
-      ctx.beginPath(); ctx.arc(bx, by, visited ? 3.5 : 2.2, 0, Math.PI*2);
-      ctx.fillStyle = visited ? `rgba(${mc},0.82)` : `rgba(${mc},0.35)`;
+      const dotR    = visited ? 6 : 4;
+      ctx.beginPath(); ctx.arc(bx, by, dotR, 0, Math.PI*2);
+      ctx.fillStyle = visited ? `rgba(${mc},0.92)` : `rgba(${mc},0.40)`;
       ctx.fill();
-      if (visited) { ctx.strokeStyle = `rgba(${mc},0.55)`; ctx.lineWidth = 0.7; ctx.stroke(); }
-      ctx.font = `6px Palatino, 'Palatino Linotype', Georgia, serif`;
+      if (visited) {
+        ctx.strokeStyle = `rgba(${mc},0.80)`;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+      ctx.font = `500 9px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = visited ? `rgba(${mc},0.75)` : `rgba(${mc},0.38)`;
-      ctx.fillText(b.num, bx, by - 7);
+      ctx.fillStyle = visited ? `rgba(255,255,255,0.90)` : `rgba(${mc},0.55)`;
+      ctx.fillText(b.num, bx, by - 11);
     });
 
     // Research points
@@ -1394,22 +2345,47 @@ export class WorldOne extends WorldBase {
       const dist = Math.hypot(pt.wx - P.x, pt.wy - P.y);
       const near   = dist < 400;
       const active = dist < 150;
-      const r = active ? 2.8 : near ? 2.0 : 1.4;
+      const r = active ? 4.5 : near ? 3.2 : 2.0;
       if (active) {
-        const halo = ctx.createRadialGradient(rx, ry, 0, rx, ry, r*2.5);
-        halo.addColorStop(0, 'rgba(140,240,180,0.45)');
-        halo.addColorStop(1, 'rgba(140,240,180,0)');
+        const halo = ctx.createRadialGradient(rx, ry, 0, rx, ry, r*3);
+        halo.addColorStop(0, 'rgba(140,255,180,0.55)');
+        halo.addColorStop(1, 'rgba(140,255,180,0)');
         ctx.fillStyle = halo;
-        ctx.beginPath(); ctx.arc(rx, ry, r*2.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(rx, ry, r*3, 0, Math.PI*2); ctx.fill();
       }
       ctx.beginPath(); ctx.arc(rx, ry, r, 0, Math.PI*2);
-      ctx.fillStyle = active ? 'rgba(160,255,190,0.95)' : near ? 'rgba(130,210,160,0.70)' : 'rgba(90,150,120,0.45)';
+      ctx.fillStyle = active ? 'rgba(160,255,190,1)' : near ? 'rgba(130,215,165,0.80)' : 'rgba(100,170,130,0.55)';
       ctx.fill();
     });
 
     // Player dot
-    ctx.beginPath(); ctx.arc(mx + P.x*sx, my + P.y*sy2, 2.5, 0, Math.PI*2);
-    ctx.fillStyle = 'rgba(240,232,205,0.92)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + P.x*sx, my + P.y*sy2, 4, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,1)'; ctx.fill();
+    // Player pulse ring
+    ctx.beginPath(); ctx.arc(mx + P.x*sx, my + P.y*sy2, 7, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Label
+    ctx.font = `500 8px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('КАРТА', mx + 4, my + mh + 5);
+
     ctx.restore();
+  }
+
+  // ── Rounded rect path helper ────────────────────────────────────────────────
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
   }
 }

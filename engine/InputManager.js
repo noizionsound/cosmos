@@ -27,6 +27,18 @@ export class InputManager {
       this._just.delete(e.code);
       this._released.add(e.code);
     });
+
+    // Mouse click — treated as "any just pressed" for intro dismiss.
+    // Kept in _just until flush() so the first game frame can read it
+    // even if mouseup fires before requestAnimationFrame runs.
+    window.addEventListener('mousedown', () => {
+      this._just.add('MouseLeft');
+      this._held.add('MouseLeft');
+    });
+    window.addEventListener('mouseup', () => {
+      this._held.delete('MouseLeft');
+      // _just intentionally NOT cleared here — cleared by flush() next frame
+    });
   }
 
   // Is key currently held down
@@ -37,6 +49,9 @@ export class InputManager {
 
   // Was key released this tick
   justReleased(code) { return this._released.has(code); }
+
+  // Any key pressed this tick (used for dismiss-any-key screens)
+  anyJustPressed() { return this._just.size > 0; }
 
   // Normalised movement vector from WASD / arrow keys
   // Returns { vx, vy } each in –1..+1, diagonal normalised

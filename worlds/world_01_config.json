@@ -1,0 +1,43 @@
+{
+  "width": 4200,
+  "height": 3000,
+  "ambient": "./sources/audio/first_level_loop_1.ogg",
+  "groundTexture": "./sources/photo/stone_texture.jpg",
+  "bubbles": [
+    {
+      "id": 1, "num": "I", "wx": 300, "wy": 300, "r": 62, "ph": 0.0,
+      "approach":      "./sources/audio/bouble_1_loop_1.ogg",
+      "inside":        "./sources/video/desert.mp4",
+      "insideType":    "video",
+      "interiorVideo": "./sources/video/desert.mp4",
+      "interiorMode":  "fullscreen",
+      "label":         "desert / field I"
+    },
+    {
+      "id": 2, "num": "II", "wx": 3900, "wy": 300, "r": 62, "ph": 2.09,
+      "approach":      "./sources/video/kalevala_texture.mp4",
+      "inside":        "./sources/audio/kalevala_21_03_26.ogg",
+      "insideType":    "audio",
+      "interiorVideo": "./sources/video/kalevala_texture.mp4",
+      "interiorMode":  "floor",
+      "label":         "kalevala / field II"
+    },
+    {
+      "id": 3, "num": "III", "wx": 2100, "wy": 2700, "r": 62, "ph": 4.19,
+      "approach":      "",
+      "inside":        "",
+      "insideType":    "audio",
+      "interiorMode":  "rune",
+      "label":         "ritual / field III"
+    }
+  ],
+  "research": [
+    "./sources/audio/research/okant_CYL_0456.ogg",
+    "./sources/audio/research/chants_bathhurst.mp3",
+    "./sources/audio/research/korobori.ogg",
+    "./sources/audio/research/bjornsang_CYL_0390.ogg",
+    "./sources/audio/research/familjefadern_CYL_0327.ogg"
+  ],
+  "nResearchPts": 14,
+  "researchPositions": []
+}

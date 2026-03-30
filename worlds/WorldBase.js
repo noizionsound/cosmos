@@ -58,16 +58,32 @@ export class WorldBase {
       audio.setAmbient(this._ambEl, 0.72);
     }
 
-    // Now that AudioContext is live, wire up spatial sources for all media
+    // Now that AudioContext is live, wire up audio sources for all media
     this.config.bubbles.forEach(b => {
       const entry = this._bubbleSpatials[b.id];
       if (!entry) return;
-      if (entry.approachEl) entry.approachSrc = audio.createSpatial(entry.approachEl);
-      if (entry.insideEl)   entry.insideSrc   = audio.createSpatial(entry.insideEl);
+      // approachSpatial:true → Resonance room + updatePosition every frame (e.g. kalevala_pre)
+      // default → dry Direct (no room reverb)
+      if (entry.approachEl) {
+        // Always spatial — approach sounds pan as player walks around the bubble
+        entry.approachSrc = audio.createSpatial(entry.approachEl, { filter: true });
+      }
+      // For video inside-type: audio routed via separate insideAudioEl (more reliable than
+      // createMediaElementSource on a video element that is also used for canvas drawImage).
+      // For audio inside-type: insideEl is the audio element itself.
+      const audioSrcEl = entry.insideAudioEl || entry.insideEl;
+      if (audioSrcEl) {
+        audioSrcEl.play().catch(() => {});
+        entry.insideSrc = audio.createDirect(audioSrcEl);
+      }
+      // Start visual-only video elements (both videoEl and video insideEl)
+      if (entry.insideEl && entry.insideEl.tagName === 'VIDEO') entry.insideEl.play().catch(() => {});
+      if (entry.videoEl) entry.videoEl.play().catch(() => {});
     });
 
+    // Research bonfires: spatial positioning + distance lowpass filter (air absorption)
     this._researchPts.forEach(pt => {
-      pt.src = audio.createSpatial(pt.el);
+      pt.src = audio.createSpatial(pt.el, { filter: true });
     });
   }
 
@@ -98,10 +114,26 @@ export class WorldBase {
       }
 
       if (b.inside) {
-        entry.insideEl = b.insideType === 'video'
-          ? this._makeVideo(b.inside)
-          : this._makeAudio(b.inside, true);
-        this._mediaEls.push(entry.insideEl);
+        if (b.insideType === 'video') {
+          // Visual element (muted) — used only for canvas drawImage
+          entry.insideEl = this._makeVideo(b.inside, true);
+          this._mediaEls.push(entry.insideEl);
+          // Separate audio element for Web Audio routing —
+          // createMediaElementSource on <video> is unreliable when muted/display:none.
+          // An <audio> element playing the same source is stable and clean.
+          entry.insideAudioEl = this._makeAudio(b.inside, true);
+          this._mediaEls.push(entry.insideAudioEl);
+        } else {
+          entry.insideEl = this._makeAudio(b.inside, true);
+          this._mediaEls.push(entry.insideEl);
+        }
+      }
+
+      // interiorVideo separate from approach — needed when approach is audio but floor is video.
+      // Don't create if it's the same URL as inside (insideEl already handles that path).
+      if (b.interiorVideo && b.interiorVideo !== b.approach && b.interiorVideo !== b.inside) {
+        entry.videoEl = this._makeVideo(b.interiorVideo);
+        this._mediaEls.push(entry.videoEl);
       }
 
       this._bubbleSpatials[b.id] = entry;
@@ -123,7 +155,10 @@ export class WorldBase {
         wx = 350 + this._sr(i*19+3+tries) * (cfg.width  - 700);
         wy = 350 + this._sr(i*19+7+tries) * (cfg.height - 700);
         tries++;
-      } while (tries < 16 && bubbles.some(b => Math.hypot(wx-b.wx, wy-b.wy) < 500));
+      } while (tries < 24 && (
+        bubbles.some(b  => Math.hypot(wx-b.wx,  wy-b.wy)  < 500) ||
+        this._researchPts.some(p => Math.hypot(wx-p.wx, wy-p.wy) < 380)
+      ));
 
       this._researchPts.push({ wx, wy, el, src: null, fileIdx: i % files.length });
     }
@@ -148,13 +183,25 @@ export class WorldBase {
     return el;
   }
 
-  _makeVideo(src) {
+  _makeVideo(src, muted = true) {
     const el = document.createElement('video');
     el.src         = src;
     el.loop        = true;
     el.playsInline = true;
     el.preload     = 'auto';
-    el.style.display = 'none';
+    el.muted       = muted;  // true for visual-only textures
+    // CRITICAL: CSS size determines the GPU compositor texture size used by drawImage().
+    // 1px or display:none → 1px texture → drawImage upscales to fullscreen → blurry.
+    // Fix: fill the viewport (opacity:0, zIndex:-1) so compositor allocates a full-res
+    // texture. The video remains completely invisible but drawImage reads full quality.
+    el.style.position     = 'fixed';
+    el.style.left         = '0';
+    el.style.top          = '0';
+    el.style.width        = '100vw';
+    el.style.height       = '100vh';
+    el.style.opacity      = '0';
+    el.style.pointerEvents = 'none';
+    el.style.zIndex       = '-1';
     document.body.appendChild(el);
     return el;
   }

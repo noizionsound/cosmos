@@ -15,8 +15,10 @@ export class Renderer {
   constructor(canvasId, worldW, worldH) {
     this.canvas  = document.getElementById(canvasId);
     this.ctx     = this.canvas.getContext('2d');
-    this.CW      = 960;
-    this.CH      = 640;
+
+    // Native screen resolution — sharp, no upscaling, no DPR (DPR causes lag)
+    this.CW      = window.innerWidth;
+    this.CH      = window.innerHeight;
     this.WW      = worldW;
     this.WH      = worldH;
     this.canvas.width  = this.CW;
@@ -30,13 +32,14 @@ export class Renderer {
     this.shakeY   = 0;
     this.shakeMag = 0;
 
-    // Noise canvas
+    // Noise canvas — generated ONCE, then only rotated (no per-frame regeneration)
     this._NS       = Math.ceil(Math.hypot(this.CW, this.CH)) + 40;
     this._noiseC   = document.createElement('canvas');
     this._noiseC.width = this._noiseC.height = this._NS;
     this._noiseCtx = this._noiseC.getContext('2d');
     this._noiseRot = 0;
     this._noiseTick = 0;
+    this.genNoise(); // generate once at startup
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -78,9 +81,7 @@ export class Renderer {
   }
 
   tickNoise() {
-    this._noiseRot  += 0.0013;
-    this._noiseTick += 1;
-    if (this._noiseTick % 2 === 0) this.genNoise();
+    this._noiseRot += 0.0013; // only rotate — no per-frame regeneration, eliminates 30Hz flicker
   }
 
   drawNoise() {
