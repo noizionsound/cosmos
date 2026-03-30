@@ -37,6 +37,20 @@ export class AudioManager {
     this.AC = new (window.AudioContext || window.webkitAudioContext)();
     if (this.AC.state === 'suspended') this.AC.resume();
 
+    // ── Auto-resume on tab return or screen wake ──────────────────────────
+    // Browsers suspend AudioContext when the tab is hidden or the device sleeps.
+    // Without this, returning users hear nothing even though boot() was already called.
+    const _resume = () => {
+      if (this.AC && this.AC.state === 'suspended') this.AC.resume();
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') _resume();
+    });
+    // Belt-and-suspenders: any click / touch / key also re-activates the context
+    ['click', 'touchstart', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, _resume, { passive: true, capture: true })
+    );
+
     // Master chain: masterG → compressor → destination
     this.masterG = this.AC.createGain();
     this.masterG.gain.value = 0.60;
