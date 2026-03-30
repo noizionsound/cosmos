@@ -838,6 +838,13 @@ export class WorldOne extends WorldBase {
     // If acoustic echo chain is active (mainGain exists), control via Web Audio gain.
     // Otherwise control via el.volume directly (acoustic echo fallback).
     if (this._ambEl) {
+      // Keep-alive: browser may pause ambient on tab switch even after AudioContext resumes
+      if (this._ambEl.paused && !this._ambEl.ended && !this._ambEl._ambPlayPending) {
+        this._ambEl._ambPlayPending = true;
+        this._ambEl.play()
+          .then(() => { this._ambEl._ambPlayPending = false; })
+          .catch(() => { this._ambEl._ambPlayPending = false; });
+      }
       const wVol   = _v.world ?? 0.55;
       // Inside bubble → full silence; outside → 0.36 (half of previous 0.72)
       const target = this._enteredBubble ? 0 : 1.8 * wVol;
