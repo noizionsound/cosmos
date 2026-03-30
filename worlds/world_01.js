@@ -149,6 +149,58 @@ export class WorldOne extends WorldBase {
     this._initAcousticEcho(engine.audio);
     // Delay fires created AFTER intro dismissed — avoids audio bleed during intro
     // (see _introActive dismiss handler in update())
+
+    // ── Desert video: requestVideoFrameCallback loop for blur-free frame decode ──
+    // Chrome may downgrade compositor texture resolution when the video element is
+    // occluded by the opaque game canvas. RVFC + createImageBitmap forces full-res
+    // CPU-side frame decode, bypassing the compositor entirely.
+    const b1e = this._bubbleSpatials[1];
+    if (b1e?.insideEl && typeof b1e.insideEl.requestVideoFrameCallback === 'function') {
+      this._startDesertRVFC(b1e.insideEl);
+    }
+
+    // ── Auto-exit listeners ──
+    // Desert (bubble I): video ends → exit
+    if (b1e?.insideAudioEl) {
+      b1e.insideAudioEl.loop = false;
+      b1e.insideAudioEl.addEventListener('ended', () => {
+        if (this._enteredBubble?.id === 1) this._autoExit = true;
+      });
+    }
+    if (b1e?.insideEl) {
+      b1e.insideEl.loop = false;
+    }
+
+    // Kalevala (bubble II): music ends → exit
+    const b2e = this._bubbleSpatials[2];
+    if (b2e?.insideEl) {
+      b2e.insideEl.loop = false;
+      b2e.insideEl.addEventListener('ended', () => {
+        if (this._enteredBubble?.id === 2) this._autoExit = true;
+      });
+    }
+  }
+
+  // ── Start requestVideoFrameCallback loop for desert video ──────────────────
+  // Captures each decoded frame as an ImageBitmap cached on the element.
+  // Drawing from ImageBitmap (not from <video> directly) avoids compositor blur.
+  _startDesertRVFC(el) {
+    if (el._rvfcRunning) return;
+    el._rvfcRunning = true;
+    const tick = () => {
+      if (el.readyState >= 2 && !el.ended) {
+        createImageBitmap(el, { resizeQuality: 'high' }).then(bm => {
+          if (el._cachedBitmap) el._cachedBitmap.close();
+          el._cachedBitmap = bm;
+        }).catch(() => {});
+      }
+      if (!el.ended) {
+        el.requestVideoFrameCallback(tick);
+      } else {
+        el._rvfcRunning = false;
+      }
+    };
+    el.requestVideoFrameCallback(tick);
   }
 
   // ─── Game state init ───────────────────────────────────────────────────────
@@ -246,6 +298,9 @@ export class WorldOne extends WorldBase {
     // ── Intro screen ──
     this._introActive = true;
     this._exitMode    = false;
+
+    // ── Auto-exit: set to true when inside audio/video reaches its end ──
+    this._autoExit = false;
 
 
     // ── Player trail & footprints ──
@@ -357,6 +412,19 @@ export class WorldOne extends WorldBase {
         }
       }
       return;
+    }
+
+    // ── Auto-exit when inside media reaches its end ──
+    if (this._autoExit && this._enteredBubble) {
+      const eb = this._enteredBubble;
+      P.x = eb.wx + eb.r + P.w * 2;
+      P.y = eb.wy;
+      P.vx = 0; P.vy = 0;
+      this._enteredBubble = null;
+      this._bubbleIrisR   = 0;
+      renderer.cam.x = Math.max(0, Math.min(WW - CW, P.x - CW / 2));
+      renderer.cam.y = Math.max(0, Math.min(WH - CH, P.y - CH / 2));
+      this._autoExit = false;
     }
 
     // ── Movement ──
@@ -2197,20 +2265,30 @@ export class WorldOne extends WorldBase {
         // ── Bubble I: desert video ──
         const b1e = this._bubbleSpatials[1];
         const el  = b1e && b1e.insideEl;
-        // Keep-alive: Chrome may pause offscreen video elements — restart silently if needed
-        if (el && el.paused && !el._playPending) {
+        // Keep-alive: Chrome may pause offscreen video — restart + resume RVFC loop
+        if (el && el.paused && !el._playPending && !el.ended) {
           el._playPending = true;
-          el.play().then(() => { el._playPending = false; }).catch(() => { el._playPending = false; });
+          el.play().then(() => {
+            el._playPending = false;
+            // Re-arm RVFC after unpausing
+            if (typeof el.requestVideoFrameCallback === 'function') {
+              this._startDesertRVFC(el);
+            }
+          }).catch(() => { el._playPending = false; });
         }
-        if (el && el.readyState >= 2) {
-          const vw = el.videoWidth || 16, vh = el.videoHeight || 9;
+        // Prefer cached ImageBitmap (sharp, CPU-decoded) over drawImage(el) (compositor, blurry)
+        const drawSrc = el?._cachedBitmap || el;
+        const hasFrame = drawSrc instanceof ImageBitmap || (el && el.readyState >= 2);
+        if (hasFrame) {
+          const vw = (drawSrc instanceof ImageBitmap ? drawSrc.width  : el?.videoWidth)  || 1920;
+          const vh = (drawSrc instanceof ImageBitmap ? drawSrc.height : el?.videoHeight) || 1080;
           const aspect = vw / vh;
-          // Fill screen edge-to-edge (cover), not 90% — avoids dark border + looks cinematic
+          // Fill screen edge-to-edge (cover) — cinematic, no black bars
           let dw, dh;
           if (CW / CH > aspect) { dw = CW; dh = CW / aspect; }
           else                  { dh = CH; dw = CH * aspect; }
           ctx.globalAlpha = bZ;
-          ctx.drawImage(el, CW/2-dw/2, CH/2-dh/2, dw, dh);
+          ctx.drawImage(drawSrc, CW/2-dw/2, CH/2-dh/2, dw, dh);
         }
 
       } else if (bId === 3) {
@@ -2225,8 +2303,9 @@ export class WorldOne extends WorldBase {
       }
     }
 
-    // World name — large, top-center
-    const worldName = (this._enteredBubble || this._lastEnteredBubble)?.name || '';
+    // World name — shown briefly after exiting, not while inside
+    // (!_enteredBubble && _lastEnteredBubble) → fades in as player leaves, then world name lingers
+    const worldName = (!this._enteredBubble && this._lastEnteredBubble)?.name || '';
     if (worldName) {
       const SANS = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       ctx.globalAlpha = bZ * 0.55;
@@ -2367,11 +2446,6 @@ export class WorldOne extends WorldBase {
     ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1; ctx.stroke();
 
     // Label
-    ctx.font = `500 8px -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText('КАРТА', mx + 4, my + mh + 5);
-
     ctx.restore();
   }
 
