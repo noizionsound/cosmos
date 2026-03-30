@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>COSMOS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&display=swap" rel="stylesheet">
@@ -247,5 +250,16 @@ document.getElementById('overlay').addEventListener('click', _startGame, { once:
 document.addEventListener('keydown', _startGame, { once: true });
 </script>
 
+<script>
+// ── Service Worker: auto cache-bust on every deploy ──────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js', { scope: './' })
+    .then(reg => {
+      // Force SW to check for updates immediately (instead of waiting 24h)
+      reg.update();
+    })
+    .catch(() => {});
+}
+</script>
 </body>
 </html>
