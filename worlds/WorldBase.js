@@ -191,15 +191,16 @@ export class WorldBase {
     el.preload     = 'auto';
     el.muted       = muted;  // true for visual-only textures
     // CRITICAL: CSS size determines GPU compositor texture size used by drawImage().
-    // opacity:0 causes Chrome to skip frame decoding (blurry/disappearing video bug).
-    // Fix: opacity:1 at full viewport size, z-index:-1 so the game canvas (z-index:1)
-    // physically covers it. Compositor decodes at full resolution; user sees nothing.
+    // opacity:0 causes Chrome to skip frame decoding entirely.
+    // z-index:-1 (behind canvas) also causes Chrome to skip decoding on some hardware.
+    // Fix: opacity:0.001 (imperceptible to user) + full viewport size → Chrome always
+    // decodes at full resolution; RVFC fires reliably; drawImage captures real frames.
     el.style.position     = 'fixed';
     el.style.left         = '0';
     el.style.top          = '0';
     el.style.width        = '100vw';
     el.style.height       = '100vh';
-    el.style.opacity      = '1';
+    el.style.opacity      = '0.001';
     el.style.pointerEvents = 'none';
     el.style.zIndex       = '-1';
     // Force a dedicated GPU compositor layer — prevents Chrome from downgrading
