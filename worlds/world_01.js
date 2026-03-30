@@ -6,27 +6,24 @@
 
 import { WorldBase } from './WorldBase.js';
 
-// ─── Auto-discovery: read fires manifest synchronously ───────────────────────
-//  fetch() is async — by the time config is read (synchronous loadWorld call),
-//  the promise hasn't resolved yet and only the fallback file would be used.
-//  XHR with async=false reads the file before any code accesses _firesFiles.
-const _FIRES_FALLBACK = ['./sources/audio/fires/fire_1_lullaby.opus'];
-const _firesFiles = (() => {
-  try {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', './sources/audio/fires/manifest.json', false); // sync
-    xhr.send(null);
-    if (xhr.status === 200) {
-      const data = JSON.parse(xhr.responseText);
-      if (Array.isArray(data) && data.length) {
-        console.log(`[COSMOS] fires manifest — ${data.length} file(s)`);
-        return data;
-      }
-    }
-  } catch (e) { /* manifest missing or malformed */ }
-  console.log('[COSMOS] fires manifest not found — using fallback');
-  return _FIRES_FALLBACK;
-})();
+// ─── Fires audio files (hardcoded — was manifest.json read via sync XHR) ──────
+//  Sync XHR is deprecated. Since the list is static, hardcoding removes the
+//  deprecated API entirely with no behaviour change.
+const _firesFiles = [
+  './sources/audio/fires/fire_1_lullaby.opus',
+  './sources/audio/fires/fire_2_taran.opus',
+  './sources/audio/fires/fire_3.opus',
+  './sources/audio/fires/fire_4_saami_1.opus',
+  './sources/audio/fires/fire_5_saami_2.opus',
+  './sources/audio/fires/fire_6_saami_3.opus',
+  './sources/audio/fires/fire_7_saami_4.opus',
+  './sources/audio/fires/fire_8_saami_5.opus',
+  './sources/audio/fires/fire_9_saami_6.opus',
+  './sources/audio/fires/fire_10_australian_2.opus',
+  './sources/audio/fires/fire_11_australian_3.opus',
+  './sources/audio/fires/fire_12_saami_7.opus',
+  './sources/audio/fires/fire_13_australian_1.opus',
+];
 
 // ─── Lore texts (shown near rune marks) ──────────────────────────────────────
 const LORE_TEXTS = [
