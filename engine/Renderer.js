@@ -23,6 +23,11 @@ export class Renderer {
     this.WH      = worldH;
     this.canvas.width  = this.CW;
     this.canvas.height = this.CH;
+    // Ensure canvas visually fills the entire viewport via CSS.
+    // Without this, some browsers/zoom levels leave a gap where the video
+    // element (opacity:1, z-index:-1) shows as a black strip on the right.
+    this.canvas.style.width  = '100vw';
+    this.canvas.style.height = '100vh';
 
     // Camera (world-space top-left corner of viewport)
     this.cam = { x: 0, y: 0 };
