@@ -85,6 +85,28 @@ export class WorldBase {
     this._researchPts.forEach(pt => {
       pt.src = audio.createSpatial(pt.el, { filter: true });
     });
+
+    // ── Audio unlock retry ────────────────────────────────────────────────────
+    // Some browsers (iOS Safari, some Android) reject play() even after a user
+    // gesture if too many elements start simultaneously. On the next interaction
+    // we retry any element that is still paused — this unblocks silent users.
+    const _allEls = [
+      this._ambEl,
+      ...(this._mediaEls || []),
+      ...(this._researchPts || []).map(p => p.el),
+    ].filter(Boolean);
+
+    const _retryAudio = () => {
+      _allEls.forEach(el => {
+        if (el.tagName !== 'VIDEO' && el.paused && !el.ended) {
+          el.play().catch(() => {});
+        }
+      });
+    };
+
+    ['click', 'touchstart', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, _retryAudio, { once: false, passive: true, capture: true })
+    );
   }
 
   dispose() {
