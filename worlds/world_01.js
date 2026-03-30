@@ -191,18 +191,21 @@ export class WorldOne extends WorldBase {
     if (el._rvfcRunning) return;
     el._rvfcRunning = true;
 
-    // Create (or reuse) offscreen canvas sized to native video resolution
-    if (!el._offscreen || el._offscreen.width !== (el.videoWidth || 1920)) {
-      el._offscreen    = document.createElement('canvas');
-      el._offscreen.width  = el.videoWidth  || 1920;
-      el._offscreen.height = el.videoHeight || 1080;
-      el._offCtx       = el._offscreen.getContext('2d');
-      el._hasFrame     = false;
-    }
-
+    // Offscreen canvas is created/resized INSIDE the tick, not here.
+    // videoWidth is 0 until loadedmetadata fires — creating canvas here would give 0×0.
     const tick = () => {
       // Capture frame at the exact moment RVFC fires (guaranteed fresh decode)
       if (el.readyState >= 2 && !el.ended) {
+        const vw = el.videoWidth  || 1920;
+        const vh = el.videoHeight || 1080;
+        // (Re)create offscreen canvas on first frame or if resolution changed
+        if (!el._offscreen || el._offscreen.width !== vw || el._offscreen.height !== vh) {
+          el._offscreen = document.createElement('canvas');
+          el._offscreen.width  = vw;
+          el._offscreen.height = vh;
+          el._offCtx = el._offscreen.getContext('2d', { alpha: false });
+          el._hasFrame = false;
+        }
         el._offCtx.drawImage(el, 0, 0);
         el._hasFrame = true;
       }
@@ -721,6 +724,17 @@ export class WorldOne extends WorldBase {
     const fVol = _v.fires   ?? 0.85;   // fires (bonfires) multiplier
     const bVol = _v.bubbles ?? 0.85;   // bubbles multiplier
 
+    // ── Approach sound helper: dry/wet blend like fires for guaranteed audibility ──
+    // setVolume(Resonance only) → Resonance applies aggressive 1/r² rolloff in px-as-metres
+    //   → approach sounds are silent even when close.
+    // setDryWet → dry path bypasses Resonance; audible at any distance where vol>0.
+    const svApproach = (src, d, vol) => {
+      if (!src) return;
+      const closeness = Math.max(0, 1 - d / 300);  // dry dominant close, wet at distance
+      if (src.setDryWet) src.setDryWet(vol * closeness, vol * (1 - closeness));
+      else src.setVolume(vol);
+    };
+
     // ── Bubble 1 approach ──
     const b1  = this.bubbles[0];
     const b1e = this._bubbleSpatials[1];
@@ -728,9 +742,7 @@ export class WorldOne extends WorldBase {
       const d  = Math.hypot(b1.wx - P.x, b1.wy - P.y);
       const f  = Math.max(0, 1 - d / 900);
       audio.updatePosition(b1e.approachSrc, b1.wx - P.x, b1.wy - P.y);
-      // 9.0 multiplier: signal enters Resonance at max gain from ~600px out.
-      // Resonance applies its own distance rolloff (~×0.22 at 4.5m) on top.
-      sv(b1e.approachSrc, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
+      svApproach(b1e.approachSrc, d, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
     }
     // ── Bubble 1 inside ──
     if (b1e && b1e.insideSrc) {
@@ -745,7 +757,7 @@ export class WorldOne extends WorldBase {
       const d  = Math.hypot(b2.wx - P.x, b2.wy - P.y);
       const f  = Math.max(0, 1 - d / 900);
       audio.updatePosition(b2e.approachSrc, b2.wx - P.x, b2.wy - P.y);
-      sv(b2e.approachSrc, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
+      svApproach(b2e.approachSrc, d, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
     }
     // ── Bubble 2 inside ──
     if (b2e && b2e.insideSrc) {
@@ -760,7 +772,7 @@ export class WorldOne extends WorldBase {
       const d  = Math.hypot(b3.wx - P.x, b3.wy - P.y);
       const f  = Math.max(0, 1 - d / 900);
       audio.updatePosition(b3e.approachSrc, b3.wx - P.x, b3.wy - P.y);
-      sv(b3e.approachSrc, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
+      svApproach(b3e.approachSrc, d, Math.min(1, f * f * 9.0) * (1 - bZ) * bVol);
     }
     // ── Bubble 3 inside ──
     if (b3e && b3e.insideSrc) {
@@ -1708,13 +1720,15 @@ export class WorldOne extends WorldBase {
     ctx.lineWidth   = 1;
     ctx.stroke();
 
-    // name label
-    const label = (b.name || b.num).toLowerCase();
-    ctx.font         = `300 12px ${SANS}`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle    = near ? `rgba(255,255,255,0.80)` : `rgba(255,255,255,0.30)`;
-    ctx.fillText(label, sx, sy);
+    // name label — hide while interior is open (would bleed through dark overlay during transition)
+    const label = (b.name || b.num).toLowerCase().replace(/_/g, ' ');
+    if (this._bubbleZoom < 0.5 || b.id !== (this._enteredBubble || this._lastEnteredBubble)?.id) {
+      ctx.font         = `300 12px ${SANS}`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle    = near ? `rgba(255,255,255,0.80)` : `rgba(255,255,255,0.30)`;
+      ctx.fillText(label, sx, sy);
+    }
 
     // entry hint
     if (near) {

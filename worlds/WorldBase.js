@@ -202,6 +202,10 @@ export class WorldBase {
     el.style.opacity      = '1';
     el.style.pointerEvents = 'none';
     el.style.zIndex       = '-1';
+    // Force a dedicated GPU compositor layer — prevents Chrome from downgrading
+    // the video's decode texture resolution when the layer is occluded by the canvas.
+    el.style.willChange   = 'transform';
+    el.style.transform    = 'translateZ(0)';
     document.body.appendChild(el);
     return el;
   }
