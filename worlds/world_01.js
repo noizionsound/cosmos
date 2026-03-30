@@ -691,7 +691,7 @@ export class WorldOne extends WorldBase {
       // closeness = 1 at d=0, 0 at d=250 → dry dominant near bonfire
       // wetness   = inverse              → Resonance room dominant at distance
       // 5.0 multiplier: 2× boost for audibility vs earlier captureStream design
-      const baseVol   = Math.min(1, f * f * 5.0) * (1 - bZ) * fVol;
+      const baseVol   = Math.min(1, f * f * 3.3) * (1 - bZ) * fVol;
       const closeness = Math.max(0, 1 - d / 250);
       if (pt.src.setDryWet) {
         pt.src.setDryWet(baseVol * closeness, baseVol * (1 - closeness));
@@ -714,7 +714,7 @@ export class WorldOne extends WorldBase {
         const dx = pt.wx - P.x, dy = pt.wy - P.y;
         const d  = Math.hypot(dx, dy);
         const f  = Math.max(0, 1 - d / 520);
-        const target = inDelay ? Math.min(1, f * f * 5.0) * bVol : 0;
+        const target = inDelay ? Math.min(1, f * f * 2.5) * bVol : 0;
         // Smooth gain transitions
         pt.inputGain.gain.value += (target - pt.inputGain.gain.value) * 0.04;
         if (pt.chain) pt.chain.gain.value = pt.inputGain.gain.value > 0.001 ? 1 : 0;
@@ -727,7 +727,7 @@ export class WorldOne extends WorldBase {
     if (this._ambEl) {
       const wVol   = _v.world ?? 0.55;
       // Inside bubble → full silence; outside → 0.36 (half of previous 0.72)
-      const target = this._enteredBubble ? 0 : 0.72 * wVol;
+      const target = this._enteredBubble ? 0 : 1.2 * wVol;
       if (this._acousticEcho?.mainGain) {
         const g = this._acousticEcho.mainGain;
         g.gain.value += (target - g.gain.value) * 0.04;
@@ -865,7 +865,7 @@ export class WorldOne extends WorldBase {
       // when the browser deprioritizes the tab, causing ambient cut-outs.
       const mediaSrc  = AC.createMediaElementSource(this._ambEl);
       const wvol      = window._COSMOS_VOL?.world ?? 0.55;
-      const mainGain  = AC.createGain();       mainGain.gain.value  = wvol * 0.72;
+      const mainGain  = AC.createGain();       mainGain.gain.value  = wvol * 1.2;
       const stereoPan = AC.createStereoPanner(); stereoPan.pan.value = 0;
 
       mediaSrc.connect(mainGain);
@@ -966,7 +966,8 @@ export class WorldOne extends WorldBase {
     try {
       const mediaSrc = AC.createMediaElementSource(ghostEl);
       const gainNode = AC.createGain();
-      const peakVol  = 0.18;   // boosted: direct gainNode→masterG (no captureStream boost)
+      // Desert ghost (bubble I) is much louder — prominent memory fragment
+      const peakVol  = b?.id === 1 ? 0.55 : 0.32;
       const fadeIn   = 3.5;
       const hold     = 4.0;
       const fadeOut  = 30.0;
@@ -1024,7 +1025,7 @@ export class WorldOne extends WorldBase {
       lp.Q.value         = 0.5;
 
       const gainNode = AC.createGain();
-      const peakVol  = 0.12;   // boosted: direct gainNode→masterG (no captureStream boost)
+      const peakVol  = 0.26;   // persistent memory layer — audible but under transient
       const fadeIn   = 8.0;
 
       gainNode.gain.setValueAtTime(0, AC.currentTime);
@@ -1041,7 +1042,7 @@ export class WorldOne extends WorldBase {
       console.warn('[PersistentGhost] error:', e.message);
       el.volume = 0.12;
       el.play().catch(() => {});
-      this._persistentGhosts[b.id] = { el, gainNode: null, AC, peakVol: 0.12, muted: false };
+      this._persistentGhosts[b.id] = { el, gainNode: null, AC, peakVol: 0.26, muted: false };
     }
   }
 
