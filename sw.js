@@ -23,12 +23,17 @@ self.addEventListener('fetch', e => {
 
   if (isMedia) {
     // ── Cache-first for media ──────────────────────────────────────────────
+    // IMPORTANT: only cache status 200 (full response).
+    // Status 206 = Range Request (browser streams audio/video in chunks).
+    // Cache API rejects 206 responses — catching the error and skipping cache.
     e.respondWith(
       caches.open(CACHE).then(cache =>
         cache.match(e.request).then(cached => {
           if (cached) return cached;
           return fetch(e.request).then(res => {
-            if (res.ok) cache.put(e.request, res.clone());
+            if (res.status === 200) {
+              cache.put(e.request, res.clone()).catch(() => {});
+            }
             return res;
           });
         })
