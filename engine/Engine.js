@@ -50,8 +50,12 @@ export class Engine {
 
     const loop = () => {
       if (!this._running) return;
-      this._update();
-      this._draw();
+      try {
+        this._update();
+        this._draw();
+      } catch (e) {
+        console.error('[Engine] loop error:', e);
+      }
       this._t++;
       requestAnimationFrame(loop);
     };
