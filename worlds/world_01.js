@@ -727,7 +727,7 @@ export class WorldOne extends WorldBase {
     if (this._ambEl) {
       const wVol   = _v.world ?? 0.55;
       // Inside bubble → full silence; outside → 0.36 (half of previous 0.72)
-      const target = this._enteredBubble ? 0 : 0.36 * wVol;
+      const target = this._enteredBubble ? 0 : 0.72 * wVol;
       if (this._acousticEcho?.mainGain) {
         const g = this._acousticEcho.mainGain;
         g.gain.value += (target - g.gain.value) * 0.04;
@@ -865,7 +865,7 @@ export class WorldOne extends WorldBase {
       // when the browser deprioritizes the tab, causing ambient cut-outs.
       const mediaSrc  = AC.createMediaElementSource(this._ambEl);
       const wvol      = window._COSMOS_VOL?.world ?? 0.55;
-      const mainGain  = AC.createGain();       mainGain.gain.value  = wvol * 0.36;
+      const mainGain  = AC.createGain();       mainGain.gain.value  = wvol * 0.72;
       const stereoPan = AC.createStereoPanner(); stereoPan.pan.value = 0;
 
       mediaSrc.connect(mainGain);
