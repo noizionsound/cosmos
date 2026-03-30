@@ -190,16 +190,16 @@ export class WorldBase {
     el.playsInline = true;
     el.preload     = 'auto';
     el.muted       = muted;  // true for visual-only textures
-    // CRITICAL: CSS size determines the GPU compositor texture size used by drawImage().
-    // 1px or display:none → 1px texture → drawImage upscales to fullscreen → blurry.
-    // Fix: fill the viewport (opacity:0, zIndex:-1) so compositor allocates a full-res
-    // texture. The video remains completely invisible but drawImage reads full quality.
+    // CRITICAL: CSS size determines GPU compositor texture size used by drawImage().
+    // opacity:0 causes Chrome to skip frame decoding (blurry/disappearing video bug).
+    // Fix: opacity:1 at full viewport size, z-index:-1 so the game canvas (z-index:1)
+    // physically covers it. Compositor decodes at full resolution; user sees nothing.
     el.style.position     = 'fixed';
     el.style.left         = '0';
     el.style.top          = '0';
     el.style.width        = '100vw';
     el.style.height       = '100vh';
-    el.style.opacity      = '0';
+    el.style.opacity      = '1';
     el.style.pointerEvents = 'none';
     el.style.zIndex       = '-1';
     document.body.appendChild(el);
