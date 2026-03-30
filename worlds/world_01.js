@@ -85,7 +85,7 @@ export class WorldOne extends WorldBase {
       groundTexture: './sources/photo/stone_texture.jpg',
 
       bubbles: [
-        { id: 1, name: 'echo_of_desert',   wx: 300,  wy: 300,  r: 72, num: 'I',   ph: 0.0,
+        { id: 1, name: 'echo_of_the_desert',   wx: 300,  wy: 300,  r: 72, num: 'I',   ph: 0.0,
           // desert_pre: dry direct approach sound — no spatial processing
           approach:      './sources/audio/bubbles/desert_pre.opus',
           inside:        './sources/video/desert.mp4',
@@ -94,7 +94,7 @@ export class WorldOne extends WorldBase {
           interiorMode:  'fullscreen',
           // ghost: plays quietly after first visit — loop at low level
           ghost:         './sources/audio/bubbles/ghost_desert_1.opus' },
-        { id: 2, name: 'echo_of_kalevala', wx: 3900, wy: 300,  r: 72, num: 'II',  ph: 2.09,
+        { id: 2, name: 'echo_of_the_kalevala', wx: 3900, wy: 300,  r: 72, num: 'II',  ph: 2.09,
           // kalevala_pre: direct approach — no room reverb (same as desert)
           approach:      './sources/audio/bubbles/kalevala_pre.opus',
           inside:        './sources/audio/bubbles/kalevala_bouble_2.opus',
@@ -182,17 +182,29 @@ export class WorldOne extends WorldBase {
   }
 
   // ── Start requestVideoFrameCallback loop for desert video ──────────────────
-  // Captures each decoded frame as an ImageBitmap cached on the element.
-  // Drawing from ImageBitmap (not from <video> directly) avoids compositor blur.
+  // At the exact moment RVFC fires, Chrome has a fresh fully-decoded frame in
+  // its internal buffer — we capture it immediately to an offscreen canvas at
+  // native video resolution (1920×1080).  Subsequent drawImage calls read from
+  // this canvas (a CPU-side pixel buffer), completely bypassing the display
+  // compositor and its degraded/occluded texture cache.
   _startDesertRVFC(el) {
     if (el._rvfcRunning) return;
     el._rvfcRunning = true;
+
+    // Create (or reuse) offscreen canvas sized to native video resolution
+    if (!el._offscreen || el._offscreen.width !== (el.videoWidth || 1920)) {
+      el._offscreen    = document.createElement('canvas');
+      el._offscreen.width  = el.videoWidth  || 1920;
+      el._offscreen.height = el.videoHeight || 1080;
+      el._offCtx       = el._offscreen.getContext('2d');
+      el._hasFrame     = false;
+    }
+
     const tick = () => {
+      // Capture frame at the exact moment RVFC fires (guaranteed fresh decode)
       if (el.readyState >= 2 && !el.ended) {
-        createImageBitmap(el, { resizeQuality: 'high' }).then(bm => {
-          if (el._cachedBitmap) el._cachedBitmap.close();
-          el._cachedBitmap = bm;
-        }).catch(() => {});
+        el._offCtx.drawImage(el, 0, 0);
+        el._hasFrame = true;
       }
       if (!el.ended) {
         el.requestVideoFrameCallback(tick);
@@ -481,6 +493,27 @@ export class WorldOne extends WorldBase {
             const firstVisit = !this._visitedBubbles.has(b.id);
             this._visitedBubbles.add(b.id);
             if (firstVisit && b.ghost) this._startPersistentGhost(b, audio);
+
+            // Reset media to start on each entry (loop=false for auto-exit bubbles)
+            if (b.id === 1) {
+              const b1e = this._bubbleSpatials[1];
+              if (b1e?.insideEl) {
+                b1e.insideEl.currentTime = 0;
+                b1e.insideEl.play().catch(() => {});
+                // Re-arm RVFC (stops when video ended)
+                this._startDesertRVFC(b1e.insideEl);
+              }
+              if (b1e?.insideAudioEl) {
+                b1e.insideAudioEl.currentTime = 0;
+                b1e.insideAudioEl.play().catch(() => {});
+              }
+            } else if (b.id === 2) {
+              const b2e = this._bubbleSpatials[2];
+              if (b2e?.insideEl) {
+                b2e.insideEl.currentTime = 0;
+                b2e.insideEl.play().catch(() => {});
+              }
+            }
             if (this._visitedBubbles.size === 3 && this._culminationTimer < 0)
               this._culminationTimer = 0;
             break;
@@ -2276,12 +2309,14 @@ export class WorldOne extends WorldBase {
             }
           }).catch(() => { el._playPending = false; });
         }
-        // Prefer cached ImageBitmap (sharp, CPU-decoded) over drawImage(el) (compositor, blurry)
-        const drawSrc = el?._cachedBitmap || el;
-        const hasFrame = drawSrc instanceof ImageBitmap || (el && el.readyState >= 2);
+        // Draw from offscreen canvas (CPU-side, full-res) — never from el directly.
+        // el._offscreen is updated each RVFC tick at native video resolution.
+        // Fallback to el only if RVFC isn't supported (non-Chrome browsers).
+        const drawSrc = (el?._hasFrame && el?._offscreen) ? el._offscreen : el;
+        const hasFrame = (el?._hasFrame) || (el && el.readyState >= 2);
         if (hasFrame) {
-          const vw = (drawSrc instanceof ImageBitmap ? drawSrc.width  : el?.videoWidth)  || 1920;
-          const vh = (drawSrc instanceof ImageBitmap ? drawSrc.height : el?.videoHeight) || 1080;
+          const vw = el?._offscreen?.width  || el?.videoWidth  || 1920;
+          const vh = el?._offscreen?.height || el?.videoHeight || 1080;
           const aspect = vw / vh;
           // Fill screen edge-to-edge (cover) — cinematic, no black bars
           let dw, dh;
@@ -2301,20 +2336,6 @@ export class WorldOne extends WorldBase {
         this._drawPlayer(ctx, renderer, t);
         ctx.globalAlpha = 1;
       }
-    }
-
-    // World name — shown briefly after exiting, not while inside
-    // (!_enteredBubble && _lastEnteredBubble) → fades in as player leaves, then world name lingers
-    const worldName = (!this._enteredBubble && this._lastEnteredBubble)?.name || '';
-    if (worldName) {
-      const SANS = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
-      ctx.globalAlpha = bZ * 0.55;
-      ctx.font         = `200 84px ${SANS}`;
-      ctx.fillStyle    = 'rgba(255,255,255,1)';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillText(worldName.replace(/_/g, ' '), CW / 2, 18);
-      ctx.textBaseline = 'middle';
     }
 
     // exit hint
