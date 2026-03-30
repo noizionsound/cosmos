@@ -2280,6 +2280,11 @@ export class WorldOne extends WorldBase {
 
       const b2e = this._bubbleSpatials[2];
       const el  = b2e && (b2e.videoEl || b2e.approachEl); // videoEl when approach is audio
+      // Keep-alive: Chrome may pause offscreen video — restart if paused mid-playback
+      if (el && el.paused && !el._playPending && !el.ended) {
+        el._playPending = true;
+        el.play().then(() => { el._playPending = false; }).catch(() => { el._playPending = false; });
+      }
       if (el && el.readyState >= 2) {
         const b2  = this.bubbles[1];
         const sc  = 1.20;
